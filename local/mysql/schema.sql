@@ -17,7 +17,7 @@
 -- Unified Service Scheduler – MySQL schema (v3, time-grid capacity ledger)
 -- v3 (2026-10-12): no stored routines or triggers, enumerations as VARCHAR,
 -- no idempotency_key table (a booking is idempotent on its natural key:
--- vehicle, customer, start, kind). See GO_IMPLEMENTATION_APPROACH.md section 0 (D2, D3, D4).
+-- vehicle, customer, start, kind). See docs/design/IMPLEMENTATION_NOTES.md section 0 (D2, D3, D4).
 -- Target: MySQL 8.0.16+ / 8.4 LTS, InnoDB, utf8mb4
 --
 -- Capacity model: every bay and every technician has one row per grid cell
@@ -69,7 +69,7 @@
 -- =============================================================================
 -- NOTE (scheduler-service copy): opening_hours, opening_exception and rota_assignment are
 -- omitted. They feed the materialiser, which is not built in this release; cells come from
--- the fixture in local/mysql/data.sql. The full 18-table schema is in the design repository.
+-- the fixture in local/mysql/data.sql.
 
 SET NAMES utf8mb4;
 SET time_zone = '+00:00';
