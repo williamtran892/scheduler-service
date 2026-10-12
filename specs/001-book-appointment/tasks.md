@@ -96,11 +96,11 @@ Single Go module at the repository root: `cmd/`, `internal/`, `local/mysql/`, `f
 
 ## Phase 6: Green, scheduling root
 
-- [ ] T034 [P] [US2] Implement internal/scheduling/grid.go until T015 passes
-- [ ] T035 [P] [US2] Implement internal/scheduling/requirement.go until T016 passes
-- [ ] T036 [P] Implement internal/scheduling/enums.go until T017 passes
-- [ ] T037 [P] Implement internal/scheduling/errors.go until T018 passes
-- [ ] T038 [US2] Implement internal/scheduling/availability.go (`FeasibleStarts`, `CandidatePairs`, `SeedFrom`, `NearestAlternatives`) until T019 passes; T020 still passes
+- [x] T034 [P] [US2] Implement internal/scheduling/grid.go until T015 passes
+- [x] T035 [P] [US2] Implement internal/scheduling/requirement.go until T016 passes
+- [x] T036 [P] Implement internal/scheduling/enums.go until T017 passes
+- [x] T037 [P] Implement internal/scheduling/errors.go until T018 passes
+- [x] T038 [US2] Implement internal/scheduling/availability.go (`FeasibleStarts`, `CandidatePairs`, `SeedFrom`, `NearestAlternatives`) until T019 passes; T020 still passes
 
 ---
 

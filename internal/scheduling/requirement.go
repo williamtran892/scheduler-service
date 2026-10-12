@@ -1,6 +1,9 @@
 package scheduling
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // ServiceRequirement is what a service type needs, in Scheduling's own terms (notes 4.2).
 type ServiceRequirement struct {
@@ -21,7 +24,10 @@ type ServiceRequirement struct {
 // start - BufferBefore and cover BufferBefore + Duration + BufferAfter, rounded up to whole
 // cells. They are identical in this release (design 5.1).
 func (r ServiceRequirement) Runs(start time.Time, g Grid) (bay, tech CellRun) {
-	panic("not implemented")
+	first := start.Add(-r.BufferBefore).Truncate(g.Slot()) // the cell the before-buffer begins in
+	end := start.Add(r.Duration + r.BufferAfter)
+	run := CellRun{First: first, Cells: g.CellsFor(end.Sub(first)), Slot: g.Slot()}
+	return run, run
 }
 
 // DealershipConfig is the dealership as booking sees it.
@@ -42,7 +48,12 @@ type DayWindow struct {
 }
 
 // Day returns the local day, in the dealership's time zone, that contains t.
-func (c DealershipConfig) Day(t time.Time) DayWindow { panic("not implemented") }
+func (c DealershipConfig) Day(t time.Time) DayWindow {
+	local := t.In(c.Location)
+	from := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, c.Location)
+	to := time.Date(local.Year(), local.Month(), local.Day()+1, 0, 0, 0, 0, c.Location)
+	return DayWindow{LocalDate: from.Format(time.DateOnly), From: from.UTC(), To: to.UTC()}
+}
 
 // ServiceBay is a bay as Scheduling sees it.
 type ServiceBay struct {
@@ -59,7 +70,14 @@ type Technician struct {
 }
 
 // HasAll reports whether the technician holds every skill in skills.
-func (t Technician) HasAll(skills []string) bool { panic("not implemented") }
+func (t Technician) HasAll(skills []string) bool {
+	for _, s := range skills {
+		if !slices.Contains(t.Skills, s) {
+			return false
+		}
+	}
+	return true
+}
 
 // Customer is a customer as Scheduling sees it.
 type Customer struct {

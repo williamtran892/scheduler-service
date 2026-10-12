@@ -46,7 +46,9 @@ type Appointment struct {
 }
 
 // Key returns the appointment's booking key.
-func (a Appointment) Key() BookingKey { panic("not implemented") }
+func (a Appointment) Key() BookingKey {
+	return BookingKey{VehicleID: a.VehicleID, CustomerID: a.CustomerID, StartAt: a.StartAt, Kind: a.Kind}
+}
 
 // CellRange is the cells an appointment owns on one resource, [From, To).
 type CellRange struct {
