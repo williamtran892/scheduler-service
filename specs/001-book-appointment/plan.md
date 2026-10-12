@@ -150,6 +150,10 @@ Each step follows Red → approval → Green → Refactor (Principle II). Tests 
 - `docs/development.md`: replace the test-only control endpoint and fake-clock text in "Tests" and "Time" with the black-box rules of decision 3 (relative dates, ledger through the record, races from the suite); add the scenario calendar (days per feature, days 9 to 12 for feature 002) and the fixture's names and ids; add the `@spec-001`, `@slow`, `@design-*`, `@R*` tags.
 - `README.md`: status line and the `test/acceptance/` description ("database reset" is not what the suite does).
 
+## Review record
+
+**Behavior gate: approved 2026-10-13** by the reviewing session on the user's behalf (the user delegated scenario approval to the reviewer, stopping them only for design-changing choices). The four feature files and the spec's acceptance block were read in full against `docs/design/SCHEDULING_DESIGN.md`, `docs/design/IMPLEMENTATION_NOTES.md` and `api/openapi.yaml`. Accepted as written, including the two booking-key lookups (each is required by a scenario: the LDS01 duplicate and the ten simultaneous identical submissions). Two items are raised to the user without blocking implementation: the `X-Channel` header as the channel stand-in, and the `actualStartAt`/`actualEndAt` schema gap, which feature 002 must settle before it starts. Routes stay unprefixed.
+
 ## Open items for the reviewer
 
 - **Behavior gate**: the scenarios need the user's approval before implementation (Principle I).
