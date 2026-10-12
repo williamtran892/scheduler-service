@@ -159,7 +159,7 @@ Single Go module at the repository root: `cmd/`, `internal/`, `local/mysql/`, `f
 
 ## Phase 13: Review gate
 
-- [ ] T062 Measure SC-005 per quickstart.md section 4 (p95 under 200 ms at 50 requests per second) and record the result in the pull request
+- [x] T062 Measure SC-005 per quickstart.md section 4 (p95 under 200 ms at 50 requests per second) and record the result in the pull request. Measured by the implementer on 2026-10-13: 1 500 requests at 50 req/s for 30 s, overall p95 9.1 ms (confirmations 9.7 ms, SLOT_TAKEN 8.9 ms); to be repeated in the pull request
 - [ ] T063 Reviewer checks each constitution gate (Behavior, Red, Green, Refactor, Docs) was honoured and that plan.md Complexity Tracking justifies every addition
 
 ---

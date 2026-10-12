@@ -3,7 +3,7 @@ package acceptance
 import "fmt"
 
 // The fixed ids of local/mysql/data.sql, by the names the feature files use. Keep in step with
-// that file; specs/001-book-appointment/data-model.md lists the same rows.
+// that file.
 
 var dealerships = map[string]string{
 	"MAN01": "d0000000-0000-4000-8000-000000000001",
