@@ -57,4 +57,7 @@ func TestFeatures(t *testing.T) {
 func initScenario(sc *godog.ScenarioContext, t *target) {
 	w := newWorld(t)
 	registerHTTPSteps(sc, w)
+	registerBookingSteps(sc, w)
+	registerRecordSteps(sc, w)
+	registerRaceSteps(sc, w)
 }

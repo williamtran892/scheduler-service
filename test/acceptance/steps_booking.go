@@ -1,0 +1,264 @@
+package acceptance
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
+
+	"github.com/cucumber/godog"
+)
+
+// defaultChannel is the channel a booking or fetch states unless a step says otherwise.
+const defaultChannel = "ADVISOR_CONSOLE"
+
+// bookingRequest is a POST /appointments request being built: the JSON body (the contract's
+// BookAppointmentRequest) and the X-Channel header, which is empty when the request has none.
+type bookingRequest struct {
+	body    map[string]any
+	channel string
+}
+
+// newBooking builds the default request: dealership MAN01, kind DROP_OFF, channel
+// ADVISOR_CONSOLE, no customer requests and no notes.
+func newBooking(customerName, service, registration, dayPhrase, hhmm string) (*bookingRequest, error) {
+	c, err := customerNamed(customerName)
+	if err != nil {
+		return nil, err
+	}
+	serviceTypeID, err := lookup("service type", serviceTypes, service)
+	if err != nil {
+		return nil, err
+	}
+	vehicleID, err := lookup("vehicle", vehicles, registration)
+	if err != nil {
+		return nil, err
+	}
+	start, err := instant(dayPhrase, hhmm)
+	if err != nil {
+		return nil, err
+	}
+	return &bookingRequest{
+		body: map[string]any{
+			"dealershipId":  dealerships["MAN01"],
+			"serviceTypeId": serviceTypeID,
+			"customerId":    c.id,
+			"vehicleId":     vehicleID,
+			"startAt":       start.Format("2006-01-02T15:04:05Z07:00"),
+			"kind":          "DROP_OFF",
+		},
+		channel: defaultChannel,
+	}, nil
+}
+
+// at sends the booking to dealership code instead of MAN01.
+func (b *bookingRequest) at(code string) error {
+	id, err := lookup("dealership", dealerships, code)
+	if err != nil {
+		return err
+	}
+	b.body["dealershipId"] = id
+	return nil
+}
+
+// apply sets the fields of a two-column "with:" table: kind, notes, waiting, courtesyCar,
+// collectionAndDelivery and requestNotes (customerRequests.notes).
+func (b *bookingRequest) apply(table *godog.Table) error {
+	requests := map[string]any{}
+	for _, row := range table.Rows {
+		if len(row.Cells) != 2 {
+			return fmt.Errorf("booking table rows have two cells: field and value")
+		}
+		field, value := row.Cells[0].Value, row.Cells[1].Value
+		switch field {
+		case "kind", "notes":
+			b.body[field] = value
+		case "requestNotes":
+			requests["notes"] = value
+		case "waiting", "courtesyCar", "collectionAndDelivery":
+			v, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("booking table %s: %w", field, err)
+			}
+			requests[field] = v
+		default:
+			return fmt.Errorf("booking table: unknown field %q", field)
+		}
+	}
+	if len(requests) > 0 {
+		b.body["customerRequests"] = requests
+	}
+	return nil
+}
+
+func (b *bookingRequest) headers() map[string]string {
+	if b.channel == "" {
+		return nil
+	}
+	return map[string]string{"X-Channel": b.channel}
+}
+
+// post sends the booking and returns the response without recording it.
+func (w *world) post(ctx context.Context, b *bookingRequest) (response, error) {
+	body, err := json.Marshal(b.body)
+	if err != nil {
+		return response{}, err
+	}
+	return w.do(ctx, http.MethodPost, "/appointments", body, b.headers())
+}
+
+// book sends the booking and records the response.
+func (w *world) book(ctx context.Context, b *bookingRequest) error {
+	resp, err := w.post(ctx, b)
+	if err != nil {
+		return err
+	}
+	w.record(resp)
+	return nil
+}
+
+func registerBookingSteps(sc *godog.ScenarioContext, w *world) {
+	const booking = `"([^"]*)" books "([^"]*)" for "([^"]*)" ` + dayPattern + ` at ` + timePattern +
+		`(?: at dealership "([^"]*)")?(?: through "([^"]*)")?`
+
+	sc.Step(`^the workshop fixture for dealership "([^"]*)"$`, w.workshopFixture)
+
+	sc.Step(`^`+booking+`$`, func(ctx context.Context, who, service, reg, d, hhmm, dealer, channel string) error {
+		b, err := buildBooking(who, service, reg, d, hhmm, dealer, channel, nil)
+		if err != nil {
+			return err
+		}
+		return w.book(ctx, b)
+	})
+	sc.Step(`^`+booking+` with:$`, func(ctx context.Context, who, service, reg, d, hhmm, dealer, channel string, table *godog.Table) error {
+		b, err := buildBooking(who, service, reg, d, hhmm, dealer, channel, table)
+		if err != nil {
+			return err
+		}
+		return w.book(ctx, b)
+	})
+	sc.Step(`^"([^"]*)" has booked "([^"]*)" for "([^"]*)" `+dayPattern+` at `+timePattern+`$`,
+		func(ctx context.Context, who, service, reg, d, hhmm string) error {
+			return w.hasBooked(ctx, who, service, reg, d, hhmm, nil)
+		})
+	sc.Step(`^"([^"]*)" has booked "([^"]*)" for "([^"]*)" `+dayPattern+` at `+timePattern+` with:$`,
+		func(ctx context.Context, who, service, reg, d, hhmm string, table *godog.Table) error {
+			return w.hasBooked(ctx, who, service, reg, d, hhmm, table)
+		})
+
+	sc.Step(`^"([^"]*)" prepares a booking of "([^"]*)" for "([^"]*)" `+dayPattern+` at `+timePattern+`$`,
+		func(who, service, reg, d, hhmm string) error {
+			b, err := newBooking(who, service, reg, d, hhmm)
+			w.prepared = b
+			return err
+		})
+	sc.Step(`^the request has "([^"]*)" removed$`, func(field string) error {
+		return w.editPrepared(func(b *bookingRequest) { delete(b.body, field) })
+	})
+	sc.Step(`^the request has "([^"]*)" set to "([^"]*)"$`, func(field, value string) error {
+		return w.editPrepared(func(b *bookingRequest) { b.body[field] = value })
+	})
+	sc.Step(`^the request has no channel$`, func() error {
+		return w.editPrepared(func(b *bookingRequest) { b.channel = "" })
+	})
+	sc.Step(`^the request has no changes$`, func() error {
+		return w.editPrepared(func(*bookingRequest) {})
+	})
+	sc.Step(`^the booking request is sent$`, func(ctx context.Context) error {
+		if w.prepared == nil {
+			return fmt.Errorf("no booking request was prepared")
+		}
+		return w.book(ctx, w.prepared)
+	})
+
+	sc.Step(`^the appointment is fetched with its events$`, func(ctx context.Context) error {
+		return w.fetchCurrent(ctx, defaultChannel, "?include=events")
+	})
+	sc.Step(`^the appointment is fetched through "([^"]*)"$`, func(ctx context.Context, channel string) error {
+		return w.fetchCurrent(ctx, channel, "")
+	})
+	sc.Step(`^appointment "([^"]*)" is fetched$`, func(ctx context.Context, id string) error {
+		return w.fetch(ctx, id, defaultChannel, "")
+	})
+}
+
+func buildBooking(who, service, reg, d, hhmm, dealer, channel string, table *godog.Table) (*bookingRequest, error) {
+	b, err := newBooking(who, service, reg, d, hhmm)
+	if err != nil {
+		return nil, err
+	}
+	if dealer != "" {
+		if err := b.at(dealer); err != nil {
+			return nil, err
+		}
+	}
+	if channel != "" {
+		b.channel = channel
+	}
+	if table != nil {
+		if err := b.apply(table); err != nil {
+			return nil, err
+		}
+	}
+	return b, nil
+}
+
+// workshopFixture checks the named dealership is in the fixture. The suite has already checked
+// the service is healthy; the fixture itself is loaded by the database container.
+func (w *world) workshopFixture(code string) error {
+	_, err := lookup("dealership", dealerships, code)
+	return err
+}
+
+// hasBooked books and requires a 201, so later steps can rely on the appointment.
+func (w *world) hasBooked(ctx context.Context, who, service, reg, d, hhmm string, table *godog.Table) error {
+	b, err := buildBooking(who, service, reg, d, hhmm, "", "", table)
+	if err != nil {
+		return err
+	}
+	if err := w.book(ctx, b); err != nil {
+		return err
+	}
+	if w.status != http.StatusCreated {
+		return fmt.Errorf("%s booking %s at %s %s: status %d, want 201; body: %s", who, service, d, hhmm, w.status, w.body)
+	}
+	return nil
+}
+
+func (w *world) editPrepared(edit func(*bookingRequest)) error {
+	if w.prepared == nil {
+		return fmt.Errorf("no booking request was prepared")
+	}
+	edit(w.prepared)
+	return nil
+}
+
+// fetchCurrent fetches "the appointment".
+func (w *world) fetchCurrent(ctx context.Context, channel, query string) error {
+	id, err := w.currentID()
+	if err != nil {
+		return err
+	}
+	return w.fetch(ctx, id, channel, query)
+}
+
+func (w *world) fetch(ctx context.Context, id, channel, query string) error {
+	resp, err := w.do(ctx, http.MethodGet, "/appointments/"+id+query, nil, map[string]string{"X-Channel": channel})
+	if err != nil {
+		return err
+	}
+	w.record(resp)
+	return nil
+}
+
+func (w *world) currentID() (string, error) {
+	if w.current == nil {
+		return "", fmt.Errorf("no appointment yet in this scenario; last response %d: %s", w.status, w.body)
+	}
+	id, ok := w.current["id"].(string)
+	if !ok {
+		return "", fmt.Errorf("the appointment has no string id: %v", w.current["id"])
+	}
+	return id, nil
+}
