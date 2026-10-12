@@ -115,11 +115,11 @@ Single Go module at the repository root: `cmd/`, `internal/`, `local/mysql/`, `f
 
 ## Phase 8: Green, scheduling MySQL
 
-- [ ] T043 [US2] [US3] Implement internal/scheduling/mysql/errors.go until T023 passes
-- [ ] T044 [US2] Implement `Store`, `New(db)` and `InTx` (default isolation; a span per transaction; rollback on error) in internal/scheduling/mysql/db.go
-- [ ] T045 [US2] Implement internal/scheduling/mysql/ledger.go: `Tx.ClaimPair` per research R1 (bay then technician; `SELECT ... FOR UPDATE` ordered by `slot_start`; fewer rows → `ErrBayNotOpen` / `ErrTechnicianNotWorking`; any non-FREE row → `ErrSlotTaken`; `UPDATE ... status = 'BOOKED', appointment_id = ?, version = version + 1`), `DayLedger` (design 11.4 islands query and BOOKED counts), `WorkingCells`, `OwnedCells`, until T024 passes
-- [ ] T046 [US1] [US3] Implement internal/scheduling/mysql/appointments.go: `InsertAppointment` (first statement of the attempt), `Appointment`, `AppointmentByBookingKey`
-- [ ] T047 [US1] Implement internal/scheduling/mysql/events.go and outbox.go: `AppendEvent` (`actor` `anonymous`), `Events`, `AppendOutbox` (`aggregate_type` `Appointment`, `event_type` `AppointmentConfirmed`, `published_at` NULL)
+- [x] T043 [US2] [US3] Implement internal/scheduling/mysql/errors.go until T023 passes
+- [x] T044 [US2] Implement `Store`, `New(db)` and `InTx` (default isolation; a span per transaction; rollback on error) in internal/scheduling/mysql/db.go
+- [x] T045 [US2] Implement internal/scheduling/mysql/ledger.go: `Tx.ClaimPair` per research R1 (bay then technician; `SELECT ... FOR UPDATE` ordered by `slot_start`; fewer rows → `ErrBayNotOpen` / `ErrTechnicianNotWorking`; any non-FREE row → `ErrSlotTaken`; `UPDATE ... status = 'BOOKED', appointment_id = ?, version = version + 1`), `DayLedger` (design 11.4 islands query and BOOKED counts), `WorkingCells`, `OwnedCells`, until T024 passes
+- [x] T046 [US1] [US3] Implement internal/scheduling/mysql/appointments.go: `InsertAppointment` (first statement of the attempt), `Appointment`, `AppointmentByBookingKey`
+- [x] T047 [US1] Implement internal/scheduling/mysql/events.go and outbox.go: `AppendEvent` (`actor` `anonymous`), `Events`, `AppendOutbox` (`aggregate_type` `Appointment`, `event_type` `AppointmentConfirmed`, `published_at` NULL)
 
 ---
 
