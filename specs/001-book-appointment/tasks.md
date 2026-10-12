@@ -150,10 +150,10 @@ Single Go module at the repository root: `cmd/`, `internal/`, `local/mysql/`, `f
 
 ## Phase 12: Documentation (Principle V)
 
-- [ ] T058 [P] Update docs/architecture.md: packages `setup`, `customers`, `scheduling` (root, `mysql`, `adapters`, `service`) and their dependency rules; routes `POST /appointments` and `GET /appointments/{appointmentId}`; the booking transaction and the claim; the problem-code table (`VALIDATION_ERROR` replaces `BAD_REQUEST`); the `X-Channel` stand-in; the 15 tables and the fixture
-- [ ] T059 [P] Update docs/features.md: a "Book an appointment" row linking features/booking.feature, features/claim_ledger.feature, features/idempotency.feature, features/concurrency.feature; remove "No scheduling features have been delivered yet"
-- [ ] T060 [P] Update docs/development.md: replace the test-only control endpoint and fake-clock text with the black-box rules (relative dates, ledger through the record, races from the suite); add the scenario calendar (days 1 to 8 used by feature 001, days 9 to 12 for feature 002), the fixture names and ids, and the tags `@spec-001`, `@slow`, `@design-*`, `@R*`
-- [ ] T061 [P] Update README.md: status line and the `test/acceptance/` description
+- [x] T058 [P] Update docs/architecture.md: packages `setup`, `customers`, `scheduling` (root, `mysql`, `adapters`, `service`) and their dependency rules; routes `POST /appointments` and `GET /appointments/{appointmentId}`; the booking transaction and the claim; the problem-code table (`VALIDATION_ERROR` replaces `BAD_REQUEST`); the `X-Channel` stand-in; the 15 tables and the fixture
+- [x] T059 [P] Update docs/features.md: a "Book an appointment" row linking features/booking.feature, features/claim_ledger.feature, features/idempotency.feature, features/concurrency.feature; remove "No scheduling features have been delivered yet"
+- [x] T060 [P] Update docs/development.md: replace the test-only control endpoint and fake-clock text with the black-box rules (relative dates, ledger through the record, races from the suite); add the scenario calendar (days 1 to 8 used by feature 001, days 9 to 12 for feature 002), the fixture names and ids, and the tags `@spec-001`, `@slow`, `@design-*`, `@R*`
+- [x] T061 [P] Update README.md: status line and the `test/acceptance/` description
 
 ---
 

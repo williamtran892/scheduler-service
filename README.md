@@ -8,9 +8,12 @@ The design extracts this repository implements are in [`docs/design/`](./docs/de
 is in [`docs/`](./docs). The project rules are in the
 [constitution](./.specify/memory/constitution.md).
 
-> **Status:** bootstrap. The process, platform package, database container and both test
-> layers are in place. No scheduling features are implemented yet; each one arrives as a
-> Spec Kit feature under `specs/`.
+> **Status:** feature 001, book an appointment, is delivered: `POST /appointments` and
+> `GET /appointments/{appointmentId}`, with the schema, the fixture and both test layers behind
+> them. Appointment lifecycle (reschedule, cancel, check-in, start, complete, no-show), listing,
+> availability search, authentication and the outbox relay are not built yet; each arrives as a
+> Spec Kit feature under `specs/`. [`docs/features.md`](./docs/features.md) lists what is
+> delivered.
 
 ## Prerequisites
 
@@ -50,7 +53,7 @@ There are two layers. Neither one replaces the other.
 | Layer | Where | Runs against | Command |
 |---|---|---|---|
 | Unit | `internal/**/*_test.go` | Mocks (`go.uber.org/mock`), no database | `make test` |
-| Acceptance (Gherkin) | `features/*.feature`, steps in `test/acceptance/` | The service container over HTTP, and the compose MySQL | `make test-integration` |
+| Acceptance (Gherkin) | `features/*.feature`, steps in `test/acceptance/` | The service container over HTTP, with the compose MySQL behind it | `make test-integration` |
 
 ```bash
 make test                                # unit tests with -race
@@ -125,9 +128,14 @@ creates tables.
 cmd/scheduler/          main: config, logger, OTel, MySQL pool, HTTP server in an errgroup
 internal/app/           NewHandler: the one place routes are registered
 internal/platform/      config, clock, ids, MySQL pool, problem-details encoder, health, OTel
+internal/setup/         Workshop Setup (read-only): dealerships, bays, technicians, service types
+internal/customers/     Customer & Vehicle (read-only)
+internal/scheduling/    Scheduling: grid and availability, the claim, appointments (root, mysql,
+                        adapters, service)
 local/mysql/            schema.sql and data.sql, the compose init scripts
 features/               Gherkin feature files
-test/acceptance/        godog suite: world, database reset, step definitions
+test/acceptance/        godog suite: a black-box HTTP client with relative dates and fixture names;
+                        no database access, no reset between scenarios
 scripts/build-image.sh  builds the Linux binary and the scheduler:local image
 scripts/integration.sh  build-image, compose up app + MySQL, wait until healthy, run the suite
 Dockerfile              packages bin/linux/scheduler into a small Alpine image
@@ -136,8 +144,9 @@ specs/                  Spec Kit feature folders (created per feature)
 .specify/               Spec Kit memory, templates and scripts
 ```
 
-Each domain (`setup`, `scheduling`, `customers`, `engagement`) is added under `internal/`
-with the layout described in section 2 of the plan.
+Each domain follows the layout of [`docs/design/IMPLEMENTATION_NOTES.md`](./docs/design/IMPLEMENTATION_NOTES.md)
+section 2; `engagement` is added when a feature needs it. [`docs/architecture.md`](./docs/architecture.md)
+describes the packages and their dependency rules.
 
 ## Feature workflow
 
