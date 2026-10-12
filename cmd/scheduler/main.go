@@ -1,10 +1,11 @@
 // Command scheduler is the one entry point: it loads configuration, opens the MySQL pool,
-// builds the HTTP handler and runs the server (and, later, the workers) in one errgroup
-// under a signal-cancelled context.
+// wires the domains, builds the HTTP handler and runs the server (and, later, the workers) in
+// one errgroup under a signal-cancelled context.
 package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,10 +15,16 @@ import (
 	"time"
 
 	"github.com/go-kit/log"
+	"go.opentelemetry.io/otel"
 	"golang.org/x/sync/errgroup"
 
 	"scheduler/internal/app"
+	customersmysql "scheduler/internal/customers/mysql"
 	"scheduler/internal/platform"
+	"scheduler/internal/scheduling/adapters"
+	schedmysql "scheduler/internal/scheduling/mysql"
+	schedsvc "scheduler/internal/scheduling/service"
+	setupmysql "scheduler/internal/setup/mysql"
 )
 
 func main() {
@@ -58,11 +65,11 @@ func run(logger log.Logger) error {
 	}
 	defer db.Close()
 
-	srv := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           app.NewHandler(app.Deps{DB: db}),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	handler := app.NewHandler(app.Deps{
+		DB:         db,
+		Scheduling: schedsvc.MakeServerEndpoints(newSchedulingService(db, logger)),
+	})
+	srv := &http.Server{Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -81,4 +88,17 @@ func run(logger log.Logger) error {
 	// Workers join the group here: g.Go(relay.NewWorker(relaySvc, every).Run(gctx)).
 
 	return g.Wait()
+}
+
+// newSchedulingService wires the Scheduling service: its store, the adapters over the setup and
+// customers repositories, the real clock and ids, and its middleware, outermost last so tracing
+// runs first.
+func newSchedulingService(db *sql.DB, logger log.Logger) schedsvc.Service {
+	workshop := adapters.NewWorkshopReader(setupmysql.New(db))
+	customers := adapters.NewCustomerReader(customersmysql.New(db))
+
+	svc := schedsvc.NewService(schedmysql.New(db), workshop, customers, platform.RealClock{}, platform.UUIDs{})
+	svc = schedsvc.LoggingMiddleware(log.With(logger, "component", "scheduling"))(svc)
+	svc = schedsvc.InstrumentingMiddleware(otel.Meter("scheduler"))(svc)
+	return schedsvc.TracingMiddleware(otel.Tracer("scheduler"))(svc)
 }

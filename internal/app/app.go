@@ -4,15 +4,18 @@ package app
 import (
 	"net/http"
 
+	kithttp "github.com/go-kit/kit/transport/http"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"scheduler/internal/platform"
+	schedsvc "scheduler/internal/scheduling/service"
 )
 
 // Deps is everything the handler needs. Each domain adds its repositories and
 // collaborators here as it is built; main fills them with real implementations.
 type Deps struct {
-	DB platform.Pinger
+	DB         platform.Pinger
+	Scheduling schedsvc.Endpoints
 }
 
 // NewHandler registers every route on one mux and wraps it in otelhttp, which opens
@@ -20,7 +23,9 @@ type Deps struct {
 func NewHandler(d Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", platform.Health(d.DB))
-	// Domain transports register here, e.g. setupsvc.RegisterRoutes(mux, endpoints, opts...).
+	// Each domain's transport registers here. Decoder failures are problems too, so every
+	// transport encodes its errors with platform.EncodeError.
+	schedsvc.RegisterRoutes(mux, d.Scheduling, kithttp.ServerErrorEncoder(platform.EncodeError))
 
 	return otelhttp.NewHandler(mux, "http", otelhttp.WithSpanNameFormatter(routeName))
 }

@@ -125,12 +125,12 @@ Single Go module at the repository root: `cmd/`, `internal/`, `local/mysql/`, `f
 
 ## Phase 9: Green, scheduling service and wiring
 
-- [ ] T048 [US1] [US2] [US3] [US4] Implement `Book` in internal/scheduling/service/booking.go per research R2, R3, R4, R7 until T025 passes
-- [ ] T049 [US1] Implement `Get` in internal/scheduling/service/service.go until T026 passes
-- [ ] T050 [P] [US1] Implement the channel views in internal/scheduling/service/view.go until T027 passes
-- [ ] T051 [US1] [US4] Implement endpoints, decoders, `encodeCreated` with `Location`, and `RegisterRoutes` (`POST /appointments`, `GET /appointments/{appointmentId}`, no `/v1` prefix) in internal/scheduling/service/endpoint.go and transport.go until T028 passes
-- [ ] T052 [P] Implement logging, instrumenting and tracing middleware in internal/scheduling/service/middleware.go until T029 passes; T030 passes
-- [ ] T053 Wire repositories, adapters, the service, middleware and routes in cmd/scheduler/main.go and internal/app/app.go (`app.Deps` gains the scheduling registration); internal/app/app_test.go still passes
+- [x] T048 [US1] [US2] [US3] [US4] Implement `Book` in internal/scheduling/service/booking.go per research R2, R3, R4, R7 until T025 passes
+- [x] T049 [US1] Implement `Get` in internal/scheduling/service/service.go until T026 passes
+- [x] T050 [P] [US1] Implement the channel views in internal/scheduling/service/view.go until T027 passes
+- [x] T051 [US1] [US4] Implement endpoints, decoders, `encodeCreated` with `Location`, and `RegisterRoutes` (`POST /appointments`, `GET /appointments/{appointmentId}`, no `/v1` prefix) in internal/scheduling/service/endpoint.go and transport.go until T028 passes
+- [x] T052 [P] Implement logging, instrumenting and tracing middleware in internal/scheduling/service/middleware.go until T029 passes; T030 passes
+- [x] T053 Wire repositories, adapters, the service, middleware and routes in cmd/scheduler/main.go and internal/app/app.go (`app.Deps` gains the scheduling registration); internal/app/app_test.go still passes
 
 ---
 
