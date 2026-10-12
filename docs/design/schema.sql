@@ -243,6 +243,8 @@ CREATE TABLE appointment (
     kind                  VARCHAR(20) NOT NULL DEFAULT 'DROP_OFF',   -- domain.AppointmentKind: WAITER|DROP_OFF|LOANER
     start_at              DATETIME(6) NOT NULL,                 -- exact arrival / work start promised to customer
     end_at                DATETIME(6) NOT NULL,                 -- exact promised ready time (no buffers)
+    actual_start_at       DATETIME(6) NULL,                     -- set when the technician clocks on (IN_PROGRESS)
+    actual_end_at         DATETIME(6) NULL,                     -- set when the job is completed; actual duration = actual_end_at - actual_start_at
     service_bay_id        CHAR(36)    NOT NULL,                 -- denormalised from claimed cells (R3)
     technician_id         CHAR(36)    NOT NULL,
     status                VARCHAR(20) NOT NULL DEFAULT 'CONFIRMED',  -- domain.AppointmentStatus: CONFIRMED|CHECKED_IN|IN_PROGRESS|COMPLETED|CANCELLED|NO_SHOW
