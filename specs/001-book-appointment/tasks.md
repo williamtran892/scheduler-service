@@ -90,7 +90,7 @@ Single Go module at the repository root: `cmd/`, `internal/`, `local/mysql/`, `f
 
 ## Phase 5: Green, platform
 
-- [ ] T033 Implement the code→status table, `FieldError`, extensions and the contract `Problem` fields in internal/platform/problem.go until T014 passes; `GET /healthz` behaviour unchanged
+- [x] T033 Implement the code→status table, `FieldError`, extensions and the contract `Problem` fields in internal/platform/problem.go until T014 passes; `GET /healthz` behaviour unchanged
 
 ---
 
