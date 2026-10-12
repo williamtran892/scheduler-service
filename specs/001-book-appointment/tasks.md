@@ -84,7 +84,7 @@ Single Go module at the repository root: `cmd/`, `internal/`, `local/mysql/`, `f
 
 ## Phase 4: Unit-test approval gate
 
-- [ ] T032 User (or the reviewer they delegate to) approves the unit tests of Phase 3 and the step definitions of Phase 2; no production code before this (Principle II)
+- [x] T032 User (or the reviewer they delegate to) approves the unit tests of Phase 3 and the step definitions of Phase 2; no production code before this (Principle II). Approved by the reviewing session on the user's behalf, 2026-10-13, after reading booking_test.go, the ledger guard, the repository interfaces and the race steps.
 
 ---
 
