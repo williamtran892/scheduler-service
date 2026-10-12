@@ -1,0 +1,6 @@
+/bin/
+coverage.out
+coverage.html
+acceptance.xml
+.env
+.DS_Store

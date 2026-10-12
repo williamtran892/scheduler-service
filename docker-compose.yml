@@ -1,0 +1,43 @@
+# The service and MySQL 8.4, for the acceptance suite and local development.
+#   make test-integration   build the image, start both, wait until healthy, run the Gherkin suite
+#   make up / make down     start / stop both
+#   make db-up              MySQL only (for `make run`)
+#
+# MySQL has no volume: the data directory is tmpfs, so every fresh start runs the two init
+# scripts on an empty database and `down` discards everything. The fixture cannot drift.
+services:
+  mysql:
+    image: mysql:8.4
+    command: --default-time-zone=+00:00 --character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: scheduler
+      MYSQL_USER: scheduler
+      MYSQL_PASSWORD: scheduler
+    ports: ["${MYSQL_PORT:-3306}:3306"]
+    tmpfs: ["/var/lib/mysql"]
+    volumes:
+      - ./local/mysql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./local/mysql/data.sql:/docker-entrypoint-initdb.d/02-data.sql:ro
+    healthcheck:
+      # 127.0.0.1 forces TCP, which only comes up after the init scripts have finished.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+
+  app:
+    build: .
+    image: scheduler:local
+    environment:
+      MYSQL_DSN: "scheduler:scheduler@tcp(mysql:3306)/scheduler?parseTime=true&loc=UTC&time_zone=%27%2B00%3A00%27&charset=utf8mb4"
+      OTEL_EXPORTER: none
+    ports: ["${APP_PORT:-8080}:8080"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
