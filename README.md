@@ -4,7 +4,7 @@ Unified service scheduler for dealership workshops: one Go process, structured w
 [go-kit](https://github.com/go-kit/kit), backed by MySQL 8.4, with behaviour specified as
 Gherkin features and built through [Spec Kit](https://github.com/github/spec-kit).
 
-The implementation approach is in [`imp plan.md`](./imp%20plan.md). How the system works today
+The design extracts this repository implements are in [`docs/design/`](./docs/design) (start with its [README](./docs/design/README.md)); the API contract is [`api/openapi.yaml`](./api/openapi.yaml). How the system works today
 is in [`docs/`](./docs). The project rules are in the
 [constitution](./.specify/memory/constitution.md).
 
