@@ -106,10 +106,10 @@ Single Go module at the repository root: `cmd/`, `internal/`, `local/mysql/`, `f
 
 ## Phase 7: Green, setup, customers, adapters
 
-- [ ] T039 [P] Implement internal/setup/enums.go until T021 passes
-- [ ] T040 [P] [US1] Implement the read-only setup repository in internal/setup/mysql/repository.go and errors.go: `Dealership`, `ServiceType` with `service_type_skill` and `service_type_bay_type`, `ActiveResources` (ACTIVE bays; ACTIVE technicians with skills where `valid_from <= date` and `valid_to` is null or `>= date`, design 11.4), `Bay`, `Technician`; `ErrNotFound` on no row
-- [ ] T041 [P] [US1] Implement the read-only customers repository in internal/customers/mysql/repository.go (`Customer`, `Vehicle`; `ErrNotFound`)
-- [ ] T042 [US1] Implement internal/scheduling/adapters/workshop.go and customers.go until T022 passes
+- [x] T039 [P] Implement internal/setup/enums.go until T021 passes
+- [x] T040 [P] [US1] Implement the read-only setup repository in internal/setup/mysql/repository.go and errors.go: `Dealership`, `ServiceType` with `service_type_skill` and `service_type_bay_type`, `ActiveResources` (ACTIVE bays; ACTIVE technicians with skills where `valid_from <= date` and `valid_to` is null or `>= date`, design 11.4), `Bay`, `Technician`; `ErrNotFound` on no row
+- [x] T041 [P] [US1] Implement the read-only customers repository in internal/customers/mysql/repository.go (`Customer`, `Vehicle`; `ErrNotFound`)
+- [x] T042 [US1] Implement internal/scheduling/adapters/workshop.go and customers.go until T022 passes
 
 ---
 

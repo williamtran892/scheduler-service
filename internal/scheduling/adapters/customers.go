@@ -8,15 +8,28 @@ import (
 )
 
 // NewCustomerReader returns Scheduling's view of Customer & Vehicle over repo.
-func NewCustomerReader(repo customers.Repository) scheduling.CustomerReader { return customerReader{} }
-
-// customerReader implements scheduling.CustomerReader over customers.Repository.
-type customerReader struct{}
-
-func (customerReader) Customer(ctx context.Context, id string) (scheduling.Customer, error) {
-	panic("not implemented")
+func NewCustomerReader(repo customers.Repository) scheduling.CustomerReader {
+	return customerReader{repo: repo}
 }
 
-func (customerReader) Vehicle(ctx context.Context, id string) (scheduling.Vehicle, error) {
-	panic("not implemented")
+// customerReader implements scheduling.CustomerReader over customers.Repository.
+type customerReader struct {
+	repo customers.Repository
+}
+
+func (r customerReader) Customer(ctx context.Context, id string) (scheduling.Customer, error) {
+	c, err := r.repo.Customer(ctx, id)
+	if err != nil {
+		return scheduling.Customer{}, translate("customer", id, err, customers.ErrNotFound)
+	}
+	return scheduling.Customer{ID: c.ID, TenantID: c.TenantID, DisplayName: c.DisplayName}, nil
+}
+
+func (r customerReader) Vehicle(ctx context.Context, id string) (scheduling.Vehicle, error) {
+	v, err := r.repo.Vehicle(ctx, id)
+	if err != nil {
+		return scheduling.Vehicle{}, translate("vehicle", id, err, customers.ErrNotFound)
+	}
+	return scheduling.Vehicle{ID: v.ID, TenantID: v.TenantID, CustomerID: v.CustomerID,
+		Registration: v.Registration, Make: v.Make, Model: v.Model}, nil
 }
