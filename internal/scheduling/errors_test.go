@@ -52,7 +52,11 @@ func TestSlotTakenError_CarriesAlternativesInTheDealershipOffset(t *testing.T) {
 	if !errors.As(err, &coded) || coded.ProblemCode() != "SLOT_TAKEN" {
 		t.Errorf("ProblemCode = %v, want SLOT_TAKEN", coded)
 	}
-	got := extensionJSON(t, err.(*SlotTakenError).ProblemExtensions(), "alternatives")
+	var taken *SlotTakenError
+	if !errors.As(err, &taken) {
+		t.Fatalf("%T is not a *SlotTakenError", err)
+	}
+	got := extensionJSON(t, taken.ProblemExtensions(), "alternatives")
 	want := `[{"endAt":"2026-10-20T10:00:00+01:00","startAt":"2026-10-20T09:15:00+01:00"}]`
 	if got != want {
 		t.Errorf("alternatives = %s, want %s", got, want)

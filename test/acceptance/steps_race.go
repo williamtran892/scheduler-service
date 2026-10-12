@@ -128,10 +128,10 @@ func (w *world) race(ctx context.Context, reqs []*bookingRequest) error {
 func (w *world) exactlyOneSucceeded(ok, failed, status int, code string) error {
 	var created, refused []response
 	for _, r := range w.raced {
-		switch {
-		case r.status == http.StatusCreated:
+		switch r.status {
+		case http.StatusCreated:
 			created = append(created, r)
-		case r.status == status:
+		case status:
 			p, err := r.json()
 			if err != nil {
 				return err

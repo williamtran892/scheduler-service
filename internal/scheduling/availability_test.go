@@ -164,7 +164,8 @@ func TestCandidatePairs_EqualLoadsAreShuffledBySeed(t *testing.T) {
 func TestSeedFrom_IsStablePerID(t *testing.T) {
 	a := "8f1c3b7a-5d2e-4c1f-9a6b-2e7d1c4f8a90"
 	b := "9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b60"
-	if SeedFrom(a) != SeedFrom(a) {
+	first, second := SeedFrom(a), SeedFrom(a)
+	if first != second {
 		t.Error("SeedFrom is not stable for one id")
 	}
 	if SeedFrom(a) == SeedFrom(b) {

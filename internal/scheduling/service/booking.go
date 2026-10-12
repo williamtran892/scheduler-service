@@ -307,9 +307,10 @@ func (s *service) afterDuplicate(ctx context.Context, p plan, dup error) (Record
 	if rec, answered, err := s.existing(ctx, p.cmd); answered {
 		return rec, err
 	}
-	// Appointments are never deleted, so the owner must exist. %v, not %w: this is an internal
-	// error, not a DUPLICATE_BOOKING answer without the appointment it should carry.
-	return Record{}, fmt.Errorf("booking key reported as duplicate but no appointment owns it: %v", dup)
+	// Appointments are never deleted, so the owner must exist. The cause is formatted as text, not
+	// wrapped: this is an internal error, not a DUPLICATE_BOOKING answer without the appointment
+	// it should carry.
+	return Record{}, fmt.Errorf("booking key reported as duplicate but no appointment owns it: %s", dup.Error())
 }
 
 // slotTaken ends a booking that found no free pair with 409 SLOT_TAKEN and alternatives, unless

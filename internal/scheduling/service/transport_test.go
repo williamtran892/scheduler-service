@@ -89,6 +89,7 @@ func TestTransport_BookIs201WithLocationAndTheRecord(t *testing.T) {
 	})
 
 	resp, body := send(t, srv, http.MethodPost, "/appointments", validBody(), "ADVISOR_CONSOLE")
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body %v", resp.StatusCode, body)
@@ -149,6 +150,7 @@ func TestTransport_BookDecoderRejections(t *testing.T) {
 			_, srv := server(t) // no Book expectation: the service must not be called
 
 			resp, body := send(t, srv, http.MethodPost, "/appointments", tt.body, tt.channel)
+			defer resp.Body.Close()
 
 			if resp.StatusCode != tt.status || body["code"] != tt.code {
 				t.Fatalf("got %d %v, want %d %s; body %v", resp.StatusCode, body["code"], tt.status, tt.code, body)
@@ -170,7 +172,9 @@ func TestTransport_TextAtTheLimitsIsAccepted(t *testing.T) {
 	b["notes"] = strings.Repeat("n", 4000)
 	b["customerRequests"] = map[string]any{"notes": strings.Repeat("n", 2000)}
 
-	if resp, body := send(t, srv, http.MethodPost, "/appointments", b, "CALL_CENTRE"); resp.StatusCode != http.StatusCreated {
+	resp, body := send(t, srv, http.MethodPost, "/appointments", b, "CALL_CENTRE")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
 		t.Errorf("status = %d, want 201; body %v", resp.StatusCode, body)
 	}
 }
@@ -215,6 +219,7 @@ func TestTransport_BookServiceErrorsBecomeProblems(t *testing.T) {
 			svc.EXPECT().Book(gomock.Any(), gomock.Any()).Return(Record{}, tt.err)
 
 			resp, body := send(t, srv, http.MethodPost, "/appointments", validBody(), "ADVISOR_CONSOLE")
+			defer resp.Body.Close()
 
 			if resp.StatusCode != tt.status || body["code"] != tt.code {
 				t.Fatalf("got %d %v, want %d %s; body %v", resp.StatusCode, body["code"], tt.status, tt.code, body)
@@ -235,14 +240,17 @@ func TestTransport_GetReturnsTheRecordForTheChannel(t *testing.T) {
 	)
 
 	resp, body := send(t, srv, http.MethodGet, "/appointments/"+appointmentUUID, nil, "ADVISOR_CONSOLE")
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || body["id"] != appointmentUUID || body["cells"] == nil {
 		t.Errorf("staff GET = %d %v, want 200 with cells", resp.StatusCode, body)
 	}
 	resp, _ = send(t, srv, http.MethodGet, "/appointments/"+appointmentUUID+"?include=events", nil, "ADVISOR_CONSOLE")
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET with events = %d, want 200", resp.StatusCode)
 	}
 	resp, body = send(t, srv, http.MethodGet, "/appointments/"+appointmentUUID, nil, "CUSTOMER_APP")
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || body["cells"] != nil || body["notes"] != nil {
 		t.Errorf("customer GET = %d %v, want 200 without cells or notes", resp.StatusCode, body)
 	}
@@ -253,6 +261,7 @@ func TestTransport_GetFailures(t *testing.T) {
 		svc, srv := server(t)
 		svc.EXPECT().Get(gomock.Any(), gomock.Any()).Return(Record{}, scheduling.ErrNotFound)
 		resp, body := send(t, srv, http.MethodGet, "/appointments/"+appointmentUUID, nil, "ADVISOR_CONSOLE")
+		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound || body["code"] != "NOT_FOUND" {
 			t.Errorf("got %d %v, want 404 NOT_FOUND", resp.StatusCode, body)
 		}
@@ -260,6 +269,7 @@ func TestTransport_GetFailures(t *testing.T) {
 	t.Run("an id that is not a UUID is 404 without asking the service", func(t *testing.T) {
 		_, srv := server(t)
 		resp, body := send(t, srv, http.MethodGet, "/appointments/not-a-uuid", nil, "ADVISOR_CONSOLE")
+		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound || body["code"] != "NOT_FOUND" {
 			t.Errorf("got %d %v, want 404 NOT_FOUND", resp.StatusCode, body)
 		}
@@ -267,6 +277,7 @@ func TestTransport_GetFailures(t *testing.T) {
 	t.Run("no channel is 400", func(t *testing.T) {
 		_, srv := server(t)
 		resp, body := send(t, srv, http.MethodGet, "/appointments/"+appointmentUUID, nil, "")
+		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusBadRequest || !namesField(body, "X-Channel") {
 			t.Errorf("got %d %v, want 400 naming X-Channel", resp.StatusCode, body)
 		}
@@ -274,6 +285,7 @@ func TestTransport_GetFailures(t *testing.T) {
 	t.Run("listing appointments is not served", func(t *testing.T) {
 		_, srv := server(t)
 		resp, _ := send(t, srv, http.MethodGet, "/appointments", nil, "ADVISOR_CONSOLE")
+		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusMethodNotAllowed {
 			t.Errorf("GET /appointments = %d, want 405 (listAppointments is not in this feature)", resp.StatusCode)
 		}

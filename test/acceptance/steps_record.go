@@ -124,7 +124,7 @@ func (w *world) locationPointsAtAppointment() error {
 	}
 	loc := w.header.Get("Location")
 	if !strings.HasSuffix(loc, "/appointments/"+id) {
-		return fmt.Errorf("Location is %q, want it to end with /appointments/%s", loc, id)
+		return fmt.Errorf("the Location header is %q, want it to end with /appointments/%s", loc, id)
 	}
 	return nil
 }

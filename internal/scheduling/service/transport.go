@@ -54,7 +54,7 @@ func decodeBookRequest(_ context.Context, r *http.Request) (any, error) {
 	}
 	var body bookBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		return nil, fmt.Errorf("%w: body: %v", platform.ErrBadRequest, err)
+		return nil, fmt.Errorf("%w: body: %w", platform.ErrBadRequest, err)
 	}
 
 	dealershipID, err := parseUUID("dealershipId", body.DealershipID)

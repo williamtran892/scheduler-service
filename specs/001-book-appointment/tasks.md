@@ -138,7 +138,7 @@ Single Go module at the repository root: `cmd/`, `internal/`, `local/mysql/`, `f
 
 - [x] T054 `make test` green with `-race`
 - [x] T055 `make test-integration TAGS=@spec-001` green (all 29 scenarios), then `make test-integration` green including `@bootstrap`
-- [ ] T056 `make lint`, `make vet`, `make check-generate` clean
+- [x] T056 `make lint`, `make vet`, `make check-generate` clean
 
 ---
 

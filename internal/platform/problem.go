@@ -8,7 +8,7 @@ import (
 )
 
 // ErrBadRequest marks a request the transport could not decode. Decoders wrap it:
-// fmt.Errorf("%w: body: %v", platform.ErrBadRequest, err).
+// fmt.Errorf("%w: body: %w", platform.ErrBadRequest, err).
 var ErrBadRequest = errors.New("bad request")
 
 // codeValidation is the problem code of a malformed request (400).
