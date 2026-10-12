@@ -25,18 +25,7 @@ func ParseAppointmentKind(s string) (AppointmentKind, error) {
 	return "", fmt.Errorf("%w: appointment kind %q", ErrInvalidEnum, s)
 }
 
-func (k *AppointmentKind) Scan(src any) error {
-	s, err := scanString(src)
-	if err != nil {
-		return err
-	}
-	v, err := ParseAppointmentKind(s)
-	if err != nil {
-		return err
-	}
-	*k = v
-	return nil
-}
+func (k *AppointmentKind) Scan(src any) error { return scanEnum(src, k, ParseAppointmentKind) }
 
 func (k AppointmentKind) Value() (driver.Value, error) { return string(k), nil }
 
@@ -60,18 +49,7 @@ func ParseAppointmentStatus(s string) (AppointmentStatus, error) {
 	return "", fmt.Errorf("%w: appointment status %q", ErrInvalidEnum, s)
 }
 
-func (s *AppointmentStatus) Scan(src any) error {
-	str, err := scanString(src)
-	if err != nil {
-		return err
-	}
-	v, err := ParseAppointmentStatus(str)
-	if err != nil {
-		return err
-	}
-	*s = v
-	return nil
-}
+func (s *AppointmentStatus) Scan(src any) error { return scanEnum(src, s, ParseAppointmentStatus) }
 
 func (s AppointmentStatus) Value() (driver.Value, error) { return string(s), nil }
 
@@ -94,18 +72,7 @@ func ParseChannel(s string) (Channel, error) {
 	return "", fmt.Errorf("%w: channel %q", ErrInvalidEnum, s)
 }
 
-func (c *Channel) Scan(src any) error {
-	s, err := scanString(src)
-	if err != nil {
-		return err
-	}
-	v, err := ParseChannel(s)
-	if err != nil {
-		return err
-	}
-	*c = v
-	return nil
-}
+func (c *Channel) Scan(src any) error { return scanEnum(src, c, ParseChannel) }
 
 func (c Channel) Value() (driver.Value, error) { return string(c), nil }
 
@@ -128,18 +95,7 @@ func ParseResourceKind(s string) (ResourceKind, error) {
 	return "", fmt.Errorf("%w: resource kind %q", ErrInvalidEnum, s)
 }
 
-func (k *ResourceKind) Scan(src any) error {
-	s, err := scanString(src)
-	if err != nil {
-		return err
-	}
-	v, err := ParseResourceKind(s)
-	if err != nil {
-		return err
-	}
-	*k = v
-	return nil
-}
+func (k *ResourceKind) Scan(src any) error { return scanEnum(src, k, ParseResourceKind) }
 
 func (k ResourceKind) Value() (driver.Value, error) { return string(k), nil }
 
@@ -159,28 +115,26 @@ func ParseCellStatus(s string) (CellStatus, error) {
 	return "", fmt.Errorf("%w: cell status %q", ErrInvalidEnum, s)
 }
 
-func (s *CellStatus) Scan(src any) error {
-	str, err := scanString(src)
-	if err != nil {
-		return err
-	}
-	v, err := ParseCellStatus(str)
-	if err != nil {
-		return err
-	}
-	*s = v
-	return nil
-}
+func (s *CellStatus) Scan(src any) error { return scanEnum(src, s, ParseCellStatus) }
 
 func (s CellStatus) Value() (driver.Value, error) { return string(s), nil }
 
-// scanString reads the string a driver hands to Scan: text arrives as []byte or string.
-func scanString(src any) (string, error) {
+// scanEnum reads a database value into *dst, rejecting what parse rejects, so a bad row fails
+// loudly at read time (notes 5.4). Text arrives from the driver as []byte or string.
+func scanEnum[T any](src any, dst *T, parse func(string) (T, error)) error {
+	var s string
 	switch v := src.(type) {
 	case string:
-		return v, nil
+		s = v
 	case []byte:
-		return string(v), nil
+		s = string(v)
+	default:
+		return fmt.Errorf("scan enumeration: cannot read a %T", src)
 	}
-	return "", fmt.Errorf("scan enumeration: cannot read a %T", src)
+	v, err := parse(s)
+	if err != nil {
+		return err
+	}
+	*dst = v
+	return nil
 }

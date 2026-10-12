@@ -144,7 +144,7 @@ Single Go module at the repository root: `cmd/`, `internal/`, `local/mysql/`, `f
 
 ## Phase 11: Refactor gate
 
-- [ ] T057 Review every changed file against Principle III (one purpose per function, top-to-bottom flow, errors with context); refactor with both suites green; record any added complexity in plan.md Complexity Tracking
+- [x] T057 Review every changed file against Principle III (one purpose per function, top-to-bottom flow, errors with context); refactor with both suites green; record any added complexity in plan.md Complexity Tracking
 
 ---
 

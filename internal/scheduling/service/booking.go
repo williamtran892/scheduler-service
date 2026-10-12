@@ -24,9 +24,9 @@ const (
 	outboxConfirmed = "AppointmentConfirmed"
 )
 
-// plan is a booking request that passed every check that needs no capacity read: the dealership
-// and service type it resolved to, the aligned start, the cell runs it needs, and the one
-// appointment id the whole request uses (it also seeds the tie shuffle).
+// plan is a booking request on its way through the checks: the dealership and service type it
+// resolved to, then the aligned start and the cell runs it needs, then the one appointment id the
+// whole request uses (it also seeds the tie shuffle).
 type plan struct {
 	cmd   BookCommand
 	cfg   scheduling.DealershipConfig
@@ -39,7 +39,7 @@ type plan struct {
 
 // Book confirms an appointment, or returns the one that already owns the booking key.
 func (s *service) Book(ctx context.Context, cmd BookCommand) (Record, error) {
-	cfg, req, err := s.resolve(ctx, cmd)
+	p, err := s.resolve(ctx, cmd)
 	if err != nil {
 		return Record{}, err
 	}
@@ -47,8 +47,7 @@ func (s *service) Book(ctx context.Context, cmd BookCommand) (Record, error) {
 		return rec, err
 	}
 
-	p, err := s.validate(cmd, cfg, req)
-	if err != nil {
+	if p, err = s.validate(p); err != nil {
 		return Record{}, err
 	}
 	if err := s.checkWorkingTime(ctx, p); err != nil {
@@ -66,36 +65,33 @@ func (s *service) Book(ctx context.Context, cmd BookCommand) (Record, error) {
 // resolve looks up the dealership, service type, customer and vehicle the request names. Each
 // must exist, share the dealership's tenant, and be consistent: the service type active, the
 // vehicle the customer's. A failure is 422 INVALID_VALUE naming the field.
-func (s *service) resolve(ctx context.Context, cmd BookCommand) (scheduling.DealershipConfig, scheduling.ServiceRequirement, error) {
+func (s *service) resolve(ctx context.Context, cmd BookCommand) (plan, error) {
 	cfg, err := s.workshop.DealershipConfig(ctx, cmd.DealershipID)
 	if err != nil {
-		return scheduling.DealershipConfig{}, scheduling.ServiceRequirement{}, referenceError("dealershipId", err)
+		return plan{}, referenceError("dealershipId", err)
 	}
 	req, err := s.workshop.Requirement(ctx, cmd.ServiceTypeID)
 	if err != nil {
-		return scheduling.DealershipConfig{}, scheduling.ServiceRequirement{}, referenceError("serviceTypeId", err)
+		return plan{}, referenceError("serviceTypeId", err)
 	}
 	if !req.Active || req.TenantID != cfg.TenantID {
-		return scheduling.DealershipConfig{}, scheduling.ServiceRequirement{},
-			platform.InvalidValue("serviceTypeId", "is not an active service type of this dealership's tenant")
+		return plan{}, platform.InvalidValue("serviceTypeId", "is not an active service type of this dealership's tenant")
 	}
 	customer, err := s.customers.Customer(ctx, cmd.CustomerID)
 	if err != nil {
-		return scheduling.DealershipConfig{}, scheduling.ServiceRequirement{}, referenceError("customerId", err)
+		return plan{}, referenceError("customerId", err)
 	}
 	if customer.TenantID != cfg.TenantID {
-		return scheduling.DealershipConfig{}, scheduling.ServiceRequirement{},
-			platform.InvalidValue("customerId", "is not a customer of this dealership's tenant")
+		return plan{}, platform.InvalidValue("customerId", "is not a customer of this dealership's tenant")
 	}
 	vehicle, err := s.customers.Vehicle(ctx, cmd.VehicleID)
 	if err != nil {
-		return scheduling.DealershipConfig{}, scheduling.ServiceRequirement{}, referenceError("vehicleId", err)
+		return plan{}, referenceError("vehicleId", err)
 	}
 	if vehicle.TenantID != cfg.TenantID || vehicle.CustomerID != customer.ID {
-		return scheduling.DealershipConfig{}, scheduling.ServiceRequirement{},
-			platform.InvalidValue("vehicleId", "is not a vehicle of this customer")
+		return plan{}, platform.InvalidValue("vehicleId", "is not a vehicle of this customer")
 	}
-	return cfg, req, nil
+	return plan{cmd: cmd, cfg: cfg, req: req}, nil
 }
 
 // referenceError answers a failed lookup of a request field: no such row is INVALID_VALUE naming
@@ -143,25 +139,26 @@ func (s *service) duplicate(ctx context.Context, a scheduling.Appointment) error
 }
 
 // validate applies the rules that need no capacity read, in order: customer channels may not
-// book staff-only services, the start is on the grid, after now and inside the booking horizon,
-// and the runs it needs follow from the service type.
-func (s *service) validate(cmd BookCommand, cfg scheduling.DealershipConfig, req scheduling.ServiceRequirement) (plan, error) {
-	if cmd.Channel.IsCustomer() && !req.OnlineBookable {
-		return plan{}, fmt.Errorf("%s: %w", req.Code, scheduling.ErrNotBookableOnline)
+// book staff-only services, the start is on the grid, after now and inside the booking horizon.
+// It returns the plan with its start and the runs the service type needs.
+func (s *service) validate(p plan) (plan, error) {
+	if p.cmd.Channel.IsCustomer() && !p.req.OnlineBookable {
+		return plan{}, fmt.Errorf("%s: %w", p.req.Code, scheduling.ErrNotBookableOnline)
 	}
-	start, err := cfg.Grid.Align(cmd.StartAt.UTC())
+	start, err := p.cfg.Grid.Align(p.cmd.StartAt.UTC())
 	if err != nil {
-		return plan{}, fmt.Errorf("%s: %w", cfg.Code, err)
+		return plan{}, fmt.Errorf("%s: %w", p.cfg.Code, err)
 	}
 	now := s.clock.Now()
 	if !start.After(now) {
 		return plan{}, platform.InvalidValue("startAt", "must be in the future")
 	}
-	if start.After(now.Add(time.Duration(cfg.BookingHorizonDays) * 24 * time.Hour)) {
-		return plan{}, platform.InvalidValue("startAt", fmt.Sprintf("must be within the %d-day booking horizon", cfg.BookingHorizonDays))
+	if start.After(now.Add(time.Duration(p.cfg.BookingHorizonDays) * 24 * time.Hour)) {
+		return plan{}, platform.InvalidValue("startAt", fmt.Sprintf("must be within the %d-day booking horizon", p.cfg.BookingHorizonDays))
 	}
-	bay, tech := req.Runs(start, cfg.Grid)
-	return plan{cmd: cmd, cfg: cfg, req: req, start: start, bay: bay, tech: tech}, nil
+	p.start = start
+	p.bay, p.tech = p.req.Runs(start, p.cfg.Grid)
+	return p, nil
 }
 
 // checkWorkingTime refuses a booking whose bay run or technician run, buffers included, covers a

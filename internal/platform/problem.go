@@ -11,6 +11,9 @@ import (
 // fmt.Errorf("%w: body: %v", platform.ErrBadRequest, err).
 var ErrBadRequest = errors.New("bad request")
 
+// codeValidation is the problem code of a malformed request (400).
+const codeValidation = "VALIDATION_ERROR"
+
 // ProblemTypeBase prefixes a problem code to form the problem's type URI (api/openapi.yaml).
 const ProblemTypeBase = "https://scheduler.example.com/problems/"
 
@@ -62,8 +65,6 @@ func BadRequest(field, message string) error {
 func InvalidValue(field, message string) error {
 	return &FieldError{Code: "INVALID_VALUE", Field: field, Message: message}
 }
-
-const codeValidation = "VALIDATION_ERROR"
 
 // problemKind is the status and title of one code in the contract's ProblemCode list.
 type problemKind struct {

@@ -57,16 +57,21 @@ func decodeBookRequest(_ context.Context, r *http.Request) (any, error) {
 		return nil, fmt.Errorf("%w: body: %v", platform.ErrBadRequest, err)
 	}
 
-	ids := make(map[string]string, 4)
-	for _, f := range []struct{ name, value string }{
-		{"dealershipId", body.DealershipID}, {"serviceTypeId", body.ServiceTypeID},
-		{"customerId", body.CustomerID}, {"vehicleId", body.VehicleID},
-	} {
-		id, err := parseUUID(f.name, f.value)
-		if err != nil {
-			return nil, err
-		}
-		ids[f.name] = id
+	dealershipID, err := parseUUID("dealershipId", body.DealershipID)
+	if err != nil {
+		return nil, err
+	}
+	serviceTypeID, err := parseUUID("serviceTypeId", body.ServiceTypeID)
+	if err != nil {
+		return nil, err
+	}
+	customerID, err := parseUUID("customerId", body.CustomerID)
+	if err != nil {
+		return nil, err
+	}
+	vehicleID, err := parseUUID("vehicleId", body.VehicleID)
+	if err != nil {
+		return nil, err
 	}
 	start, err := parseStart(body.StartAt)
 	if err != nil {
@@ -88,10 +93,10 @@ func decodeBookRequest(_ context.Context, r *http.Request) (any, error) {
 	}
 
 	return bookRequest{Command: BookCommand{
-		DealershipID:     ids["dealershipId"],
-		ServiceTypeID:    ids["serviceTypeId"],
-		CustomerID:       ids["customerId"],
-		VehicleID:        ids["vehicleId"],
+		DealershipID:     dealershipID,
+		ServiceTypeID:    serviceTypeID,
+		CustomerID:       customerID,
+		VehicleID:        vehicleID,
 		StartAt:          start,
 		Kind:             kind,
 		CustomerRequests: body.CustomerRequests,

@@ -25,18 +25,7 @@ func ParseBayType(s string) (BayType, error) {
 	return "", fmt.Errorf("%w: bay type %q", ErrInvalidEnum, s)
 }
 
-func (t *BayType) Scan(src any) error {
-	s, err := scanString(src)
-	if err != nil {
-		return err
-	}
-	v, err := ParseBayType(s)
-	if err != nil {
-		return err
-	}
-	*t = v
-	return nil
-}
+func (t *BayType) Scan(src any) error { return scanEnum(src, t, ParseBayType) }
 
 func (t BayType) Value() (driver.Value, error) { return string(t), nil }
 
@@ -57,18 +46,7 @@ func ParseBayStatus(s string) (BayStatus, error) {
 	return "", fmt.Errorf("%w: bay status %q", ErrInvalidEnum, s)
 }
 
-func (s *BayStatus) Scan(src any) error {
-	str, err := scanString(src)
-	if err != nil {
-		return err
-	}
-	v, err := ParseBayStatus(str)
-	if err != nil {
-		return err
-	}
-	*s = v
-	return nil
-}
+func (s *BayStatus) Scan(src any) error { return scanEnum(src, s, ParseBayStatus) }
 
 func (s BayStatus) Value() (driver.Value, error) { return string(s), nil }
 
@@ -88,28 +66,26 @@ func ParseTechnicianStatus(s string) (TechnicianStatus, error) {
 	return "", fmt.Errorf("%w: technician status %q", ErrInvalidEnum, s)
 }
 
-func (s *TechnicianStatus) Scan(src any) error {
-	str, err := scanString(src)
-	if err != nil {
-		return err
-	}
-	v, err := ParseTechnicianStatus(str)
-	if err != nil {
-		return err
-	}
-	*s = v
-	return nil
-}
+func (s *TechnicianStatus) Scan(src any) error { return scanEnum(src, s, ParseTechnicianStatus) }
 
 func (s TechnicianStatus) Value() (driver.Value, error) { return string(s), nil }
 
-// scanString reads the string a driver hands to Scan: text arrives as []byte or string.
-func scanString(src any) (string, error) {
+// scanEnum reads a database value into *dst, rejecting what parse rejects, so a bad row fails
+// loudly at read time (notes 5.4). Text arrives from the driver as []byte or string.
+func scanEnum[T any](src any, dst *T, parse func(string) (T, error)) error {
+	var s string
 	switch v := src.(type) {
 	case string:
-		return v, nil
+		s = v
 	case []byte:
-		return string(v), nil
+		s = string(v)
+	default:
+		return fmt.Errorf("scan enumeration: cannot read a %T", src)
 	}
-	return "", fmt.Errorf("scan enumeration: cannot read a %T", src)
+	v, err := parse(s)
+	if err != nil {
+		return err
+	}
+	*dst = v
+	return nil
 }

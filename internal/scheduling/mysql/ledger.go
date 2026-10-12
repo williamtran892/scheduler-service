@@ -42,7 +42,8 @@ func (tx *Tx) claimRun(dealershipID string, kind scheduling.ResourceKind, id str
 	if err != nil {
 		return fmt.Errorf("lock %s %s cells: %w", kind, id, mapError(err))
 	}
-	cells, err := scanCells(rows)
+	defer rows.Close()
+	cells, err := scanCells(rows) // reads every row, so the connection is free for the UPDATE
 	if err != nil {
 		return fmt.Errorf("lock %s %s cells: %w", kind, id, mapError(err))
 	}
@@ -69,7 +70,6 @@ func (tx *Tx) claimRun(dealershipID string, kind scheduling.ResourceKind, id str
 }
 
 func scanCells(rows *sql.Rows) ([]cell, error) {
-	defer rows.Close()
 	var cells []cell
 	for rows.Next() {
 		var c cell
