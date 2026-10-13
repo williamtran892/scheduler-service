@@ -134,16 +134,16 @@ Single Go module at the repository root: `cmd/`, `internal/`, `local/mysql/`, `f
 
 ## Phase 10: Refactor gate
 
-- [ ] T052 Review every changed file against Principle III; refactor with both suites green; record any added complexity in plan.md Complexity Tracking
+- [x] T052 Review every changed file against Principle III; refactor with both suites green; record any added complexity in plan.md Complexity Tracking
 
 ---
 
 ## Phase 11: Documentation (Principle V)
 
-- [ ] T053 [P] Update docs/architecture.md per plan.md "Documentation": the six routes, a Lifecycle section (transaction order, own-cell claim, `ReleaseCells`, reschedule's reuse of booking, late arrival, complete's `Ceil(now)`), the sweeper in Process and Packages, the 403 rule in Channel, the produced codes, actual times, configuration
-- [ ] T054 [P] Update docs/features.md: an "Appointment lifecycle" row linking features/lifecycle.feature, features/reschedule.feature, features/noshow.feature
-- [ ] T055 [P] Update docs/development.md: the `@clock` rule and `SCHEDULER_TEST_DSN`, tags `@lifecycle`, `@reschedule`, `@no-show`, `@clock`, the calendar for days 9 to 12 and LDS01, the fixture rows and the 6 048 cells, the ledger guard's `test/` exclusion, and the calendar rule that a customer's booking keys are global across dealerships (LDS01 scenarios book evening hours)
-- [ ] T056 [P] Update README.md: status, configuration table (`NO_SHOW_GRACE`, `NO_SHOW_SWEEP_INTERVAL`, `SCHEDULER_TEST_DSN`), the `test/acceptance/` line
+- [x] T053 [P] Update docs/architecture.md per plan.md "Documentation": the six routes, a Lifecycle section (transaction order, own-cell claim, `ReleaseCells`, reschedule's reuse of booking, late arrival, complete's `Ceil(now)`), the sweeper in Process and Packages, the 403 rule in Channel, the produced codes, actual times, configuration
+- [x] T054 [P] Update docs/features.md: an "Appointment lifecycle" row linking features/lifecycle.feature, features/reschedule.feature, features/noshow.feature
+- [x] T055 [P] Update docs/development.md: the `@clock` rule and `SCHEDULER_TEST_DSN`, tags `@lifecycle`, `@reschedule`, `@no-show`, `@clock`, the calendar for days 9 to 12 and LDS01, the fixture rows and the 6 048 cells, the ledger guard's `test/` exclusion, and the calendar rule that a customer's booking keys are global across dealerships (LDS01 scenarios book evening hours)
+- [x] T056 [P] Update README.md: status, configuration table (`NO_SHOW_GRACE`, `NO_SHOW_SWEEP_INTERVAL`, `SCHEDULER_TEST_DSN`), the `test/acceptance/` line
 
 ---
 
