@@ -47,12 +47,12 @@
 --     ledger tables (opening hours, technician_skill, time_slot, events) are
 --     reached only through their parent and carry the parent key instead.
 --   * IDs are CHAR(36) UUIDs for readability; BINARY(16) in production.
---   * Double-booking prevention: the application locks the cells of a run
---     with SELECT ... FOR UPDATE, checks in code that every cell exists and
---     is FREE (or owned by the appointment being rescheduled), then UPDATEs
---     them to BOOKED, all in one transaction. A locking read returns current
---     data and takes an exclusive lock per row, so this is correct at any
---     isolation level. store.Tx.ClaimPair is the single sanctioned claim path
+--   * Double-booking prevention: the application claims the cells of a run
+--     with one conditional UPDATE (status FREE, or already owned by the
+--     claiming appointment) and checks that it affected exactly the run's
+--     cell count; fewer means a cell is missing or taken and the transaction
+--     rolls back. An UPDATE is a locking current read, so this is correct at
+--     any isolation level. store.Tx.ClaimPair is the single sanctioned claim path
 --     and store.Tx.ReleaseCells the single release path; see the comment
 --     block after time_slot. MySQL error 1213 (deadlock victim, possible when
 --     a reschedule races a booking on the same cells) is retried once.
@@ -306,22 +306,27 @@ CREATE TABLE time_slot (
 -- How capacity is claimed and released (application code, store/ledger.go)
 --
 -- CLAIM, per resource, bay first then technician, inside the booking tx:
---   SELECT slot_start, status, appointment_id FROM time_slot
---    WHERE resource_kind = ? AND resource_id = ? AND slot_start BETWEEN ? AND ?
---    ORDER BY slot_start FOR UPDATE;
---   -- in code: fewer rows than cells needed -> BAY_NOT_OPEN / TECHNICIAN_NOT_WORKING
---   --          any row not FREE and not owned by the appointment being
---   --          rescheduled                 -> SLOT_TAKEN (with the cells)
 --   UPDATE time_slot SET status = 'BOOKED', appointment_id = ?, version = version + 1
---    WHERE resource_kind = ? AND resource_id = ? AND slot_start BETWEEN ? AND ?;
+--    WHERE resource_kind = ? AND resource_id = ? AND dealership_id = ?
+--      AND slot_start BETWEEN ? AND ?
+--      AND (status = 'FREE' OR appointment_id = ?);   -- own cells count as claimable
+--   -- in code: affected rows = cells needed -> claimed
+--   --          fewer -> SELECT ... FOR UPDATE over the range to name the failure:
+--   --            fewer rows than cells needed -> BAY_NOT_OPEN / TECHNICIAN_NOT_WORKING
+--   --            a row BOOKED by another appointment -> SLOT_TAKEN
+--   --          and the transaction rolls back (the UPDATE may already have
+--   --          changed the cells it did match)
 --
--- Why this is race-free without explicit locks or an isolation-level
--- requirement: SELECT ... FOR UPDATE is a current read. It takes an exclusive
--- lock on each matching row and returns the latest committed version, not the
--- transaction's snapshot. Two claimers for overlapping cells serialise on the
--- first shared row; the loser resumes after the winner commits, sees BOOKED,
--- and stops before writing. A cell row that does not exist cannot be claimed,
--- so working time is enforced by row existence.
+-- Why this is race-free without a read before it or an isolation-level
+-- requirement: an UPDATE is a current read. It takes an exclusive lock on each
+-- row of the range in primary-key order and evaluates its WHERE clause on the
+-- latest committed row, not the transaction's snapshot. Two claimers for
+-- overlapping cells serialise on the first shared row; the loser resumes after
+-- the winner commits, finds those cells BOOKED by somebody else, matches fewer
+-- rows than the run has cells, and is refused. version = version + 1 makes
+-- every matched row count as changed, so the affected-row count is exact (the
+-- connection must not set clientFoundRows). A cell row that does not exist
+-- cannot be claimed, so working time is enforced by row existence.
 --
 -- Lock order: within one statement InnoDB locks rows in primary-key order
 -- (resource_kind, resource_id, slot_start). Every caller claims the bay
