@@ -26,22 +26,30 @@ const (
 	outboxConfirmed = "AppointmentConfirmed"
 )
 
-// plan is a request for cells on its way through the checks: the dealership and service type it
-// resolved to, the start it asked for, then the aligned start and the cell runs it needs, and the
-// one appointment id the whole request uses (it also seeds the tie shuffle). A booking fills cmd.
+// plan is a request for cells on its way through the checks: the dealership, service type,
+// customer and vehicle it resolved to, the start it asked for, then the aligned start and the cell
+// runs it needs, and the one appointment id the whole request uses (it also seeds the tie
+// shuffle). A booking fills cmd. bays and techs are the day's active bays and technicians by id,
+// left there by the last candidates call: together with the rest they are everything an
+// attempt's record shows, so the record is built from the plan without reading again (record).
 // A reschedule or a late arrival moves an existing appointment instead: existingAppointmentID is
-// its id, whose cells count as free; requiredBayID and requiredTechnicianID are the resources a
-// reschedule names; preferredPair is the pair tried first (design 5.4).
+// its id, whose cells count as free, and loadPeople reads its customer and vehicle;
+// requiredBayID and requiredTechnicianID are the resources a reschedule names; preferredPair is
+// the pair tried first (design 5.4).
 type plan struct {
 	cmd           BookCommand
 	cfg           scheduling.DealershipConfig
 	req           scheduling.ServiceRequirement
+	customer      scheduling.Customer
+	vehicle       scheduling.Vehicle
 	channel       scheduling.Channel
 	requested     time.Time
 	start         time.Time
 	bay           scheduling.CellRun
 	tech          scheduling.CellRun
 	appointmentID string
+	bays          map[string]scheduling.ServiceBay
+	techs         map[string]scheduling.Technician
 
 	existingAppointmentID string
 	requiredBayID         string
@@ -74,11 +82,11 @@ func (s *service) Book(ctx context.Context, cmd BookCommand) (Record, error) {
 	}
 	p.appointmentID = s.ids.New()
 
-	pairs, err := s.candidates(ctx, p)
+	pairs, err := s.candidates(ctx, &p)
 	if err != nil {
 		return Record{}, err
 	}
-	rec, err := s.claim(ctx, p, pairs, func(pair scheduling.Candidate) (Record, error) {
+	rec, err := s.claim(ctx, &p, pairs, func(pair scheduling.Candidate) (Record, error) {
 		return s.attempt(ctx, p, pair)
 	})
 	switch {
@@ -121,7 +129,7 @@ func (s *service) resolve(ctx context.Context, cmd BookCommand) (plan, error) {
 	if vehicle.TenantID != cfg.TenantID || vehicle.CustomerID != customer.ID {
 		return plan{}, platform.InvalidValue("vehicleId", "is not a vehicle of this customer")
 	}
-	return plan{cmd: cmd, cfg: cfg, req: req, channel: cmd.Channel, requested: cmd.StartAt}, nil
+	return plan{cmd: cmd, cfg: cfg, req: req, customer: customer, vehicle: vehicle, channel: cmd.Channel, requested: cmd.StartAt}, nil
 }
 
 // referenceError answers a failed lookup of a request field: no such row is INVALID_VALUE naming
@@ -213,13 +221,15 @@ func (s *service) checkWorkingTime(ctx context.Context, p plan) error {
 // candidates returns the (bay, technician) pairs that can take the request's runs, least-loaded
 // first, with the plan's preferred pair ahead of them when it is one. It answers
 // NO_QUALIFIED_TECHNICIAN when nobody active holds the required skills on the local date, and
-// refuses the resources a reschedule names when they do not fit the service type.
-func (s *service) candidates(ctx context.Context, p plan) ([]scheduling.Candidate, error) {
+// refuses the resources a reschedule names when they do not fit the service type. It leaves the
+// day's bays and technicians in the plan for the record of each attempt.
+func (s *service) candidates(ctx context.Context, p *plan) ([]scheduling.Candidate, error) {
 	day := p.cfg.Day(p.start)
 	bays, techs, err := s.workshop.Resources(ctx, p.cfg.DealershipID, day.LocalDate)
 	if err != nil {
 		return nil, err
 	}
+	p.keepResources(bays, techs)
 	if err := p.checkPins(bays, techs); err != nil {
 		return nil, err
 	}
@@ -240,6 +250,36 @@ func (s *service) candidates(ctx context.Context, p plan) ([]scheduling.Candidat
 		pairs = slices.Insert(slices.Delete(pairs, i, i+1), 0, preferred)
 	}
 	return pairs, nil
+}
+
+// keepResources puts the day's bays and technicians in the plan by id, replacing the ones a
+// previous candidates call left.
+func (p *plan) keepResources(bays []scheduling.ServiceBay, techs []scheduling.Technician) {
+	p.bays = make(map[string]scheduling.ServiceBay, len(bays))
+	for _, b := range bays {
+		p.bays[b.ID] = b
+	}
+	p.techs = make(map[string]scheduling.Technician, len(techs))
+	for _, t := range techs {
+		p.techs[t.ID] = t
+	}
+}
+
+// record is the record of appointment a, which owns cells, assembled in memory from what the plan
+// has read: the dealership, service type, customer and vehicle, and the bay and technician out of
+// the day's lists. Those lists hold every pair candidates returns, so a's pair is always in them.
+// It reads nothing: the stored appointments of Get and load go through service.record.
+func (p plan) record(a scheduling.Appointment, cells scheduling.OwnedCells) Record {
+	return Record{
+		Appointment: a,
+		Dealership:  p.cfg,
+		ServiceType: p.req,
+		Customer:    p.customer,
+		Vehicle:     p.vehicle,
+		Bay:         p.bays[a.ServiceBayID],
+		Technician:  p.techs[a.TechnicianID],
+		Cells:       cells,
+	}
 }
 
 // checkPins refuses a named bay or technician that cannot do the job: unknown, inactive, or a bay
@@ -282,7 +322,7 @@ func (p plan) restrict(bays []scheduling.ServiceBay, techs []scheduling.Technici
 // first attempt that succeeds, errNoPair when no pair is left, errCellsGone when cells went
 // missing twice, and any other error an attempt returned (a duplicate booking key, a stale
 // version) unchanged.
-func (s *service) claim(ctx context.Context, p plan, pairs []scheduling.Candidate,
+func (s *service) claim(ctx context.Context, p *plan, pairs []scheduling.Candidate,
 	attempt func(scheduling.Candidate) (Record, error)) (Record, error) {
 	remainingPairs := pairs
 	refreshed := false
@@ -321,13 +361,10 @@ func (s *service) claim(ctx context.Context, p plan, pairs []scheduling.Candidat
 func (s *service) attempt(ctx context.Context, p plan, pair scheduling.Candidate) (Record, error) {
 	a := s.newAppointment(p, pair)
 	cells := scheduling.OwnedCells{Bay: cellRange(p.bay), Technician: cellRange(p.tech)}
-	rec, err := s.record(ctx, a, cells) // everything the snapshots need, read before the transaction
-	if err != nil {
-		return Record{}, err
-	}
+	rec := p.record(a, cells) // everything the snapshots need, already read
 	snapshot := newView(rec, true)
 
-	err = s.store.InTx(ctx, func(tx mysql.Tx) error {
+	err := s.store.InTx(ctx, func(tx mysql.Tx) error {
 		if err := tx.InsertAppointment(a); err != nil {
 			return err
 		}

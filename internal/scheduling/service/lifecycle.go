@@ -289,23 +289,30 @@ func (s *service) next(a scheduling.Appointment, status scheduling.AppointmentSt
 	return a
 }
 
-// apply runs one transition in one transaction, in the statement order that is the correctness
-// argument: the version-guarded update of the appointment, which locks its row so two transitions
-// of one appointment serialise there, then the claim, the release, the audit event and the
-// outbox row. It returns the record after the transition, which is also what
-// the outbox row holds. The record is read before the transaction, like booking's.
+// apply runs one transition in one transaction: it reads the record after the transition, before
+// the transaction, then commits. A transition that has the record's names in its plan (a
+// reschedule, a late arrival) builds the record from the plan and calls commit itself.
 func (s *service) apply(ctx context.Context, cmd TransitionCommand, a, next scheduling.Appointment, ch change) (Record, error) {
 	rec, err := s.record(ctx, next, ch.resultingCells)
 	if err != nil {
 		return Record{}, err
 	}
+	return s.commit(ctx, cmd, a, next, ch, rec)
+}
+
+// commit runs one transition in one transaction, in the statement order that is the correctness
+// argument: the version-guarded update of the appointment, which locks its row so two transitions
+// of one appointment serialise there, then the claim, the release, the audit event and the
+// outbox row. rec is the record after the transition, built before the transaction: it is what
+// the outbox row holds and what commit returns.
+func (s *service) commit(ctx context.Context, cmd TransitionCommand, a, next scheduling.Appointment, ch change, rec Record) (Record, error) {
 	snapshot := newView(rec, true)
 	actor := cmd.Actor
 	if actor == "" {
 		actor = actorAnonymous
 	}
 
-	err = s.store.InTx(ctx, func(tx mysql.Tx) error {
+	err := s.store.InTx(ctx, func(tx mysql.Tx) error {
 		if err := tx.UpdateAppointment(next, a.Version); err != nil {
 			return err
 		}

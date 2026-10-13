@@ -196,10 +196,18 @@ The service reacts to the outcome of an attempt:
 same service type over the requested local date and the next one, later than now, never the
 requested start, nearest first and earlier first on a tie.
 
-The record of an appointment is assembled from several reads, each through its own domain: the
-appointment and its owned cells from `scheduling/mysql`, the names of the dealership, service
-type, bay and technician through `WorkshopReader`, the customer and vehicle through
-`CustomerReader`.
+The record that the response and the outbox snapshot show is built before the transaction. A
+booking builds it in memory from what the request has already read, so no attempt reads anything
+(a retried pair included): the dealership, service type, customer and vehicle that check 2
+resolved, the bay and technician out of the day's active bays and technicians that candidate
+selection read, and the cells the runs claim. The pair always comes from those lists. A
+reschedule and a late arrival build their records the same way, after reading the appointment's
+customer and vehicle once, when the candidates are known.
+
+The other records, those of `Get`, of a replayed booking key and of the other transitions, are
+assembled from several reads, each through its own domain: the appointment and its owned cells
+from `scheduling/mysql`, the names of the dealership, service type, bay and technician through
+`WorkshopReader`, the customer and vehicle through `CustomerReader`.
 
 ## Lifecycle
 

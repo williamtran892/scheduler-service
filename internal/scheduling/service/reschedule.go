@@ -46,16 +46,20 @@ func (s *service) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record
 	if err := s.checkWorkingTime(ctx, p); err != nil {
 		return Record{}, err
 	}
-	pairs, err := s.candidates(ctx, p)
+	pairs, err := s.candidates(ctx, &p)
 	if err != nil {
 		return Record{}, err
 	}
+	if err := s.loadPeople(ctx, &p, a); err != nil {
+		return Record{}, err
+	}
 
-	rec, err := s.claim(ctx, p, pairs, func(pair scheduling.Candidate) (Record, error) {
+	rec, err := s.claim(ctx, &p, pairs, func(pair scheduling.Candidate) (Record, error) {
 		next := s.next(a, scheduling.StatusConfirmed)
 		next.StartAt, next.EndAt = p.start, p.start.Add(p.req.Duration)
 		next.ServiceBayID, next.TechnicianID = pair.BayID, pair.TechID
-		return s.apply(ctx, cmd.TransitionCommand, a, next, change{
+		cells := scheduling.OwnedCells{Bay: cellRange(p.bay), Technician: cellRange(p.tech)}
+		return s.commit(ctx, cmd.TransitionCommand, a, next, change{
 			event:   eventRescheduled,
 			outbox:  outboxRescheduled,
 			payload: eventPayload{Reason: cmd.Reason, Previous: placementOf(a), New: placementOf(next)},
@@ -64,8 +68,8 @@ func (s *service) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record
 				Bay:        &scheduling.ResourceRun{ResourceID: pair.BayID, Run: p.bay},
 				Technician: &scheduling.ResourceRun{ResourceID: pair.TechID, Run: p.tech},
 			},
-			resultingCells: scheduling.OwnedCells{Bay: cellRange(p.bay), Technician: cellRange(p.tech)},
-		})
+			resultingCells: cells,
+		}, p.record(next, cells))
 	})
 	switch {
 	case errors.Is(err, errNoPair):
@@ -92,27 +96,31 @@ func (s *service) lateArrival(ctx context.Context, cmd TransitionCommand, a sche
 	p.start = p.cfg.Grid.Floor(s.clock.Now())
 	p.bay, p.tech = p.req.Runs(p.start, p.cfg.Grid)
 
-	pairs, err := s.candidates(ctx, p)
+	pairs, err := s.candidates(ctx, &p)
 	if errors.Is(err, scheduling.ErrNoQualifiedTechnician) {
 		return Record{}, s.slotTakenError(ctx, p)
 	}
 	if err != nil {
 		return Record{}, err
 	}
+	if err := s.loadPeople(ctx, &p, a); err != nil {
+		return Record{}, err
+	}
 
-	rec, err := s.claim(ctx, p, pairs, func(pair scheduling.Candidate) (Record, error) {
+	rec, err := s.claim(ctx, &p, pairs, func(pair scheduling.Candidate) (Record, error) {
 		next := s.next(a, scheduling.StatusCheckedIn)
 		next.StartAt, next.EndAt = p.start, p.start.Add(p.req.Duration)
 		next.ServiceBayID, next.TechnicianID = pair.BayID, pair.TechID
 		payload := payload
 		payload.LateArrival, payload.Previous, payload.New = true, placementOf(a), placementOf(next)
-		return s.apply(ctx, cmd, a, next, change{
+		cells := scheduling.OwnedCells{Bay: cellRange(p.bay), Technician: cellRange(p.tech)}
+		return s.commit(ctx, cmd, a, next, change{
 			event:          eventCheckedIn,
 			outbox:         outboxCheckedIn,
 			payload:        payload,
 			claim:          &newRuns{bayID: pair.BayID, techID: pair.TechID, bay: p.bay, tech: p.tech},
-			resultingCells: scheduling.OwnedCells{Bay: cellRange(p.bay), Technician: cellRange(p.tech)},
-		})
+			resultingCells: cells,
+		}, p.record(next, cells))
 	})
 	switch {
 	case errors.Is(err, errNoPair), errors.Is(err, errCellsGone), errors.Is(err, scheduling.ErrNoQualifiedTechnician):
@@ -141,6 +149,20 @@ func (s *service) movePlan(ctx context.Context, a scheduling.Appointment, channe
 		existingAppointmentID: a.ID,
 		preferredPair:         scheduling.Candidate{BayID: a.ServiceBayID, TechID: a.TechnicianID},
 	}, nil
+}
+
+// loadPeople reads the customer and the vehicle of the appointment being moved into the plan, once
+// the candidates are known and before the first attempt, so that no attempt reads anything to
+// build its record. movePlan does not read them: a move refused by a check never needs them.
+func (s *service) loadPeople(ctx context.Context, p *plan, a scheduling.Appointment) error {
+	var err error
+	if p.customer, err = s.customers.Customer(ctx, a.CustomerID); err != nil {
+		return fmt.Errorf("record of appointment %s: %w", a.ID, err)
+	}
+	if p.vehicle, err = s.customers.Vehicle(ctx, a.VehicleID); err != nil {
+		return fmt.Errorf("record of appointment %s: %w", a.ID, err)
+	}
+	return nil
 }
 
 // keyOwner answers a 1062 on the booking key of a move: DUPLICATE_BOOKING carrying the

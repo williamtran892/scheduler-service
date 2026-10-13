@@ -154,8 +154,9 @@ func (s *service) load(ctx context.Context, a scheduling.Appointment) (Record, e
 	return s.record(ctx, a, cells)
 }
 
-// record assembles an appointment's record: the names come from the other domains through the
-// readers, so each domain's tables are read only by its own package (notes 2).
+// record assembles a stored appointment's record: the names come from the other domains through
+// the readers, so each domain's tables are read only by its own package (notes 2). A booking, a
+// reschedule and a late arrival build theirs from the plan instead (plan.record).
 func (s *service) record(ctx context.Context, a scheduling.Appointment, cells scheduling.OwnedCells) (Record, error) {
 	rec := Record{Appointment: a, Cells: cells}
 	var err error
