@@ -25,9 +25,26 @@ const gridCell = 15 * time.Minute
 const pollEvery = 200 * time.Millisecond
 
 func registerClockSteps(sc *godog.ScenarioContext, w *world) {
-	sc.Step(`^the appointment(?: of "([^"]*)")? is backdated by (\d+) days$`, w.backdate)
-	sc.Step(`^the appointment(?: of "([^"]*)")? becomes "([^"]*)" within (\d+) seconds$`, w.becomes)
+	sc.Step(`^the appointment(?: of "([^"]*)")? (?:is|has been) backdated by (\d+) days$`, w.backdate)
+	sc.Step(`^the appointment(?: of "([^"]*)")? (?:becomes|has become) "([^"]*)" within (\d+) seconds$`, w.becomes)
 	sc.Step(`^the appointment starts at the current grid cell$`, w.startsAtCurrentCell)
+	sc.Step(`^"([^"]*)" has booked "([^"]*)" for "([^"]*)" (\d+) minutes after the current grid cell at dealership "([^"]*)"$`,
+		w.hasBookedAfterCurrentCell)
+}
+
+// hasBookedAfterCurrentCell books a start the given number of minutes after the grid cell that
+// contains the suite's now, and requires a 201. It keeps a dealership's pair busy at a known
+// distance from the cells a late arrival claims.
+func (w *world) hasBookedAfterCurrentCell(ctx context.Context, who, service, reg string, minutes int, dealer string) error {
+	start := time.Now().UTC().Truncate(gridCell).Add(time.Duration(minutes) * time.Minute)
+	b, err := newBookingAt(who, service, reg, start)
+	if err != nil {
+		return err
+	}
+	if err := b.at(dealer); err != nil {
+		return err
+	}
+	return w.bookedOK(ctx, who, b)
 }
 
 // database opens the compose MySQL from SCHEDULER_TEST_DSN, once per run, on first use.

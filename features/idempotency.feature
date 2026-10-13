@@ -5,8 +5,8 @@ Feature: Repeating a booking is safe
   appointment that exists. The client sends no idempotency header. (design 4.1.4, 5.2, 7, 11.1;
   notes 0 D4, 4.4; bookAppointment "Safe to repeat")
 
-  Calendar: this file books MAN01 only in 6 days' time (09:00 to 16:30) and in 7 days' time
-  (10:00 to 10:45).
+  Calendar: this file books MAN01 only in 6 days' time (09:00 to 16:30, in six disjoint windows)
+  and in 7 days' time (10:00 to 10:45).
 
   Background:
     Given the workshop fixture for dealership "MAN01"
@@ -44,8 +44,7 @@ Feature: Repeating a booking is safe
     And the problem carries the first booking as the existing appointment with service type "INTERIM"
 
   Scenario: A request that failed leaves nothing behind, so its retry runs again
-    When "Alice" books "DIAGNOSTIC" for "YK21 ABC" in 6 days at 15:30 through "CUSTOMER_WEB"
-    Then the response is 422 "SERVICE_NOT_BOOKABLE_ONLINE"
+    Given "Alice" has attempted to book "DIAGNOSTIC" for "YK21 ABC" in 6 days at 15:30 through "CUSTOMER_WEB" and been refused
     When "Alice" books "DIAGNOSTIC" for "YK21 ABC" in 6 days at 15:30 through "ADVISOR_CONSOLE"
     Then the response is 201 with an id that is a UUID
 

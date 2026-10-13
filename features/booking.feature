@@ -8,7 +8,9 @@ Feature: Book an appointment
 
   Dates are relative to the day the suite runs and times are Europe/London. The database is not
   reset between scenarios, so each scenario books its own window.
-  Calendar: this file books MAN01 only tomorrow (08:45 to 16:45) and in 2 days' time.
+  Calendar: this file books MAN01 only tomorrow (08:45 to 11:15, 11:30 to 12:15, 13:00 to 13:45,
+  14:00 to 14:45 and 15:00 to 15:45, one window per scenario; the refusals claim nothing) and in
+  2 days' time (the whole day, for the least-loaded scenario).
 
   Background:
     Given the workshop fixture for dealership "MAN01"
@@ -48,9 +50,14 @@ Feature: Book an appointment
     And the appointment has customer requests "Rattle from rear left"
     And the record shows no ledger cells and no notes
     And the record shows the technician by id only
+
+  Scenario: Staff see a customer-channel booking's ledger cells but no internal notes
+    Given "Bob" has booked "INTERIM" for "BD70 XYZ" tomorrow at 14:00 through "CUSTOMER_WEB" with:
+      | requestNotes | Rattle from rear left   |
+      | notes        | Internal: offer a valet |
     When the appointment is fetched through "ADVISOR_CONSOLE"
     Then the response is 200
-    And the appointment owns 3 bay cells from 13:00 to 13:45
+    And the appointment owns 3 bay cells from 14:00 to 14:45
     And the record shows no notes
 
   Scenario: The least-loaded qualified bay and technician get the job

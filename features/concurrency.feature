@@ -5,7 +5,8 @@ Feature: Concurrent bookings never double book
   from the suite and their outcomes counted; which request wins is not asserted, because the
   database decides. (design 5.2, 5.3, 7, 11.3; notes 4.5)
 
-  Calendar: this file books MAN01 only in 7 days' time (13:00 to 15:45) and in 8 days' time.
+  Calendar: this file books MAN01 only in 7 days' time (13:00 to 15:45) and in 8 days' time
+  (09:00 to 15:00).
 
   Background:
     Given the workshop fixture for dealership "MAN01"

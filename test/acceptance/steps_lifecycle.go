@@ -39,13 +39,21 @@ var reachPath = map[string][]string{
 }
 
 func registerLifecycleSteps(sc *godog.ScenarioContext, w *world) {
-	sc.Step(`^the appointment(?: of "([^"]*)")? is `+verbPattern+`(?: with version (\d+))?(?: through "([^"]*)")?$`,
-		func(ctx context.Context, who, verb, version, channel string) error {
-			return w.transition(ctx, who, operations[verb], nil, version, channel)
-		})
-	sc.Step(`^the appointment has been `+verbPattern+`$`, func(ctx context.Context, verb string) error {
-		return w.transitionOK(ctx, operations[verb], nil)
+	// Each transition is a When ("the appointment is ..."), a Given that requires 200 ("the
+	// appointment has been ..."), and a Given that requires a refusal ("an attempt to have the
+	// appointment ... has been refused").
+	const of = `(?: of "([^"]*)")?`
+	const transition = verbPattern + `(?: with version (\d+))?(?: through "([^"]*)")?`
+	sc.Step(`^the appointment`+of+` is `+transition+`$`, func(ctx context.Context, who, verb, version, channel string) error {
+		return w.transitionVerb(ctx, who, verb, version, channel)
 	})
+	sc.Step(`^the appointment has been `+transition+`$`, func(ctx context.Context, verb, version, channel string) error {
+		return w.transitionOK(ctx, operations[verb], nil, version, channel)
+	})
+	sc.Step(`^an attempt to have the appointment`+of+` `+transition+` has been refused$`,
+		func(ctx context.Context, who, verb, version, channel string) error {
+			return w.refused(w.transitionVerb(ctx, who, verb, version, channel))
+		})
 	sc.Step(`^the appointment is started with a start time of `+timePattern+` `+dayPattern+`$`,
 		func(ctx context.Context, hhmm, d string) error {
 			t, err := instant(d, hhmm)
@@ -56,36 +64,36 @@ func registerLifecycleSteps(sc *godog.ScenarioContext, w *world) {
 		})
 	sc.Step(`^the appointment has reached "([^"]*)"$`, w.reach)
 
-	sc.Step(`^the appointment is rescheduled to `+timePattern+` `+dayPattern+`(?: with version (\d+))?(?: through "([^"]*)")?$`,
-		func(ctx context.Context, hhmm, d, version, channel string) error {
-			body, err := startAtBody(hhmm, d)
-			if err != nil {
-				return err
-			}
-			return w.transition(ctx, "", "reschedule", body, version, channel)
-		})
-	sc.Step(`^the appointment has been rescheduled to `+timePattern+` `+dayPattern+`$`,
-		func(ctx context.Context, hhmm, d string) error {
-			body, err := startAtBody(hhmm, d)
-			if err != nil {
-				return err
-			}
-			return w.transitionOK(ctx, "reschedule", body)
-		})
-	sc.Step(`^the appointment is reassigned to technician "([^"]*)"(?: through "([^"]*)")?$`,
-		func(ctx context.Context, tech, channel string) error {
-			id, err := lookup("technician", technicians, tech)
-			if err != nil {
-				return err
-			}
-			return w.transition(ctx, "", "reschedule", map[string]any{"technicianId": id}, "", channel)
-		})
-	sc.Step(`^the appointment is reassigned to bay "([^"]*)"$`, func(ctx context.Context, bay string) error {
-		id, err := lookup("bay", bays, bay)
+	const reschedule = ` rescheduled to ` + timePattern + ` ` + dayPattern + `(?: with version (\d+))?(?: through "([^"]*)")?`
+	sc.Step(`^the appointment is`+reschedule+`$`, w.rescheduleTo)
+	sc.Step(`^the appointment has been`+reschedule+`$`, func(ctx context.Context, hhmm, d, version, channel string) error {
+		body, err := startAtBody(hhmm, d)
 		if err != nil {
 			return err
 		}
-		return w.transition(ctx, "", "reschedule", map[string]any{"serviceBayId": id}, "", "")
+		return w.transitionOK(ctx, "reschedule", body, version, channel)
+	})
+	sc.Step(`^an attempt to have the appointment`+reschedule+` has been refused$`,
+		func(ctx context.Context, hhmm, d, version, channel string) error {
+			return w.refused(w.rescheduleTo(ctx, hhmm, d, version, channel))
+		})
+
+	const toTechnician = ` reassigned to technician "([^"]*)"(?: through "([^"]*)")?`
+	sc.Step(`^the appointment is`+toTechnician+`$`, w.reassignTechnician)
+	sc.Step(`^the appointment has been`+toTechnician+`$`, func(ctx context.Context, tech, channel string) error {
+		id, err := lookup("technician", technicians, tech)
+		if err != nil {
+			return err
+		}
+		return w.transitionOK(ctx, "reschedule", map[string]any{"technicianId": id}, "", channel)
+	})
+	sc.Step(`^an attempt to have the appointment`+toTechnician+` has been refused$`, func(ctx context.Context, tech, channel string) error {
+		return w.refused(w.reassignTechnician(ctx, tech, channel))
+	})
+
+	sc.Step(`^the appointment is reassigned to bay "([^"]*)"$`, w.reassignBay)
+	sc.Step(`^an attempt to have the appointment reassigned to bay "([^"]*)" has been refused$`, func(ctx context.Context, bay string) error {
+		return w.refused(w.reassignBay(ctx, bay))
 	})
 	sc.Step(`^the appointment has been reassigned to bay "([^"]*)" with technician "([^"]*)"$`,
 		func(ctx context.Context, bay, tech string) error {
@@ -97,7 +105,7 @@ func registerLifecycleSteps(sc *godog.ScenarioContext, w *world) {
 			if err != nil {
 				return err
 			}
-			return w.transitionOK(ctx, "reschedule", map[string]any{"serviceBayId": bayID, "technicianId": techID})
+			return w.transitionOK(ctx, "reschedule", map[string]any{"serviceBayId": bayID, "technicianId": techID}, "", "")
 		})
 	sc.Step(`^appointment "([^"]*)" is `+verbPattern+`$`, func(ctx context.Context, id, verb string) error {
 		return w.postTransition(ctx, id, operations[verb], map[string]any{"expectedVersion": 1}, defaultChannel)
@@ -122,6 +130,38 @@ func registerLifecycleSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^the appointment has an actual start time and an actual end time$`, func() error { return w.actualTimes(true, true) })
 	sc.Step(`^the appointment's actual start is `+timePattern+` `+dayPattern+`$`, w.actualStartIs)
 	sc.Step(`^the audit trail has exactly one "([^"]*)" event by "([^"]*)"$`, w.auditTrailHasOneBy)
+}
+
+// transitionVerb sends the transition a step's verb names, with no body of its own.
+func (w *world) transitionVerb(ctx context.Context, who, verb, version, channel string) error {
+	return w.transition(ctx, who, operations[verb], nil, version, channel)
+}
+
+// rescheduleTo moves "the appointment" to a new start.
+func (w *world) rescheduleTo(ctx context.Context, hhmm, d, version, channel string) error {
+	body, err := startAtBody(hhmm, d)
+	if err != nil {
+		return err
+	}
+	return w.transition(ctx, "", "reschedule", body, version, channel)
+}
+
+// reassignTechnician gives "the appointment" another technician at the same time.
+func (w *world) reassignTechnician(ctx context.Context, tech, channel string) error {
+	id, err := lookup("technician", technicians, tech)
+	if err != nil {
+		return err
+	}
+	return w.transition(ctx, "", "reschedule", map[string]any{"technicianId": id}, "", channel)
+}
+
+// reassignBay gives "the appointment" another bay at the same time.
+func (w *world) reassignBay(ctx context.Context, bay string) error {
+	id, err := lookup("bay", bays, bay)
+	if err != nil {
+		return err
+	}
+	return w.transition(ctx, "", "reschedule", map[string]any{"serviceBayId": id}, "", "")
 }
 
 func startAtBody(hhmm, d string) (map[string]any, error) {
@@ -201,9 +241,10 @@ func (w *world) postTransition(ctx context.Context, id, operation string, body m
 	return nil
 }
 
-// transitionOK sends a transition to "the appointment" and requires 200.
-func (w *world) transitionOK(ctx context.Context, operation string, body map[string]any) error {
-	if err := w.transition(ctx, "", operation, body, "", ""); err != nil {
+// transitionOK sends a transition to "the appointment" and requires 200. version and channel
+// are as for transition.
+func (w *world) transitionOK(ctx context.Context, operation string, body map[string]any, version, channel string) error {
+	if err := w.transition(ctx, "", operation, body, version, channel); err != nil {
 		return err
 	}
 	if w.status != http.StatusOK {
@@ -219,7 +260,7 @@ func (w *world) reach(ctx context.Context, status string) error {
 		return fmt.Errorf("unknown status %q", status)
 	}
 	for _, operation := range path {
-		if err := w.transitionOK(ctx, operation, nil); err != nil {
+		if err := w.transitionOK(ctx, operation, nil, "", ""); err != nil {
 			return err
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/cucumber/godog"
 )
@@ -28,6 +29,15 @@ type preparedRequest struct {
 // newBooking builds the default booking request, for POST bookingPath: dealership MAN01, kind
 // DROP_OFF, channel ADVISOR_CONSOLE, no customer requests and no notes.
 func newBooking(customerName, service, registration, dayPhrase, hhmm string) (*preparedRequest, error) {
+	start, err := instant(dayPhrase, hhmm)
+	if err != nil {
+		return nil, err
+	}
+	return newBookingAt(customerName, service, registration, start)
+}
+
+// newBookingAt is newBooking for a start given as an instant.
+func newBookingAt(customerName, service, registration string, start time.Time) (*preparedRequest, error) {
 	c, err := customerNamed(customerName)
 	if err != nil {
 		return nil, err
@@ -37,10 +47,6 @@ func newBooking(customerName, service, registration, dayPhrase, hhmm string) (*p
 		return nil, err
 	}
 	vehicleID, err := lookup("vehicle", vehicles, registration)
-	if err != nil {
-		return nil, err
-	}
-	start, err := instant(dayPhrase, hhmm)
 	if err != nil {
 		return nil, err
 	}
@@ -145,15 +151,24 @@ func registerBookingSteps(sc *godog.ScenarioContext, w *world) {
 		return w.bookAs(ctx, who, b)
 	})
 	const hasBooked = `"([^"]*)" has booked "([^"]*)" for "([^"]*)" ` + dayPattern + ` at ` + timePattern +
-		`(?: at dealership "([^"]*)")?`
+		`(?: at dealership "([^"]*)")?(?: through "([^"]*)")?`
 	sc.Step(`^`+hasBooked+`$`,
-		func(ctx context.Context, who, service, reg, d, hhmm, dealer string) error {
-			return w.hasBooked(ctx, who, service, reg, d, hhmm, dealer, nil)
+		func(ctx context.Context, who, service, reg, d, hhmm, dealer, channel string) error {
+			return w.hasBooked(ctx, who, service, reg, d, hhmm, dealer, channel, nil)
 		})
 	sc.Step(`^`+hasBooked+` with:$`,
-		func(ctx context.Context, who, service, reg, d, hhmm, dealer string, table *godog.Table) error {
-			return w.hasBooked(ctx, who, service, reg, d, hhmm, dealer, table)
+		func(ctx context.Context, who, service, reg, d, hhmm, dealer, channel string, table *godog.Table) error {
+			return w.hasBooked(ctx, who, service, reg, d, hhmm, dealer, channel, table)
 		})
+	const attempted = `"([^"]*)" has attempted to book "([^"]*)" for "([^"]*)" ` + dayPattern + ` at ` + timePattern +
+		`(?: at dealership "([^"]*)")?(?: through "([^"]*)")? and been refused`
+	sc.Step(`^`+attempted+`$`, func(ctx context.Context, who, service, reg, d, hhmm, dealer, channel string) error {
+		b, err := buildBooking(who, service, reg, d, hhmm, dealer, channel, nil)
+		if err != nil {
+			return err
+		}
+		return w.refused(w.bookAs(ctx, who, b))
+	})
 
 	sc.Step(`^"([^"]*)" prepares a booking of "([^"]*)" for "([^"]*)" `+dayPattern+` at `+timePattern+`$`,
 		func(who, service, reg, d, hhmm string) error {
@@ -230,16 +245,34 @@ func (w *world) workshopFixture(code string) error {
 }
 
 // hasBooked books and requires a 201, so later steps can rely on the appointment.
-func (w *world) hasBooked(ctx context.Context, who, service, reg, d, hhmm, dealer string, table *godog.Table) error {
-	b, err := buildBooking(who, service, reg, d, hhmm, dealer, "", table)
+func (w *world) hasBooked(ctx context.Context, who, service, reg, d, hhmm, dealer, channel string, table *godog.Table) error {
+	b, err := buildBooking(who, service, reg, d, hhmm, dealer, channel, table)
 	if err != nil {
 		return err
 	}
+	return w.bookedOK(ctx, who, b)
+}
+
+// bookedOK books for who and requires a 201.
+func (w *world) bookedOK(ctx context.Context, who string, b *preparedRequest) error {
 	if err := w.bookAs(ctx, who, b); err != nil {
 		return err
 	}
 	if w.status != http.StatusCreated {
-		return fmt.Errorf("%s booking %s at %s %s: status %d, want 201; body: %s", who, service, d, hhmm, w.status, w.body)
+		return fmt.Errorf("%s booking %s at %v: status %d, want 201; body: %s",
+			who, nameOf(serviceTypes, fmt.Sprint(b.body["serviceTypeId"])), b.body["startAt"], w.status, w.body)
+	}
+	return nil
+}
+
+// refused checks that the request a Given step just sent was refused with a problem (4xx), so a
+// scenario can build on a refusal it does not itself assert. err is the error of sending it.
+func (w *world) refused(err error) error {
+	if err != nil {
+		return err
+	}
+	if w.status < http.StatusBadRequest || w.status >= http.StatusInternalServerError {
+		return fmt.Errorf("status %d, want a refusal (4xx); body: %s", w.status, w.body)
 	}
 	return nil
 }

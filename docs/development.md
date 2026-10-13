@@ -22,6 +22,12 @@ Where this page and the constitution disagree, the constitution wins. Fix this p
   `scheduler:local` image, starts it with a fresh MySQL through docker compose, waits until both
   are healthy, runs `test/acceptance` against the container, then removes both containers. The
   suite is a black-box client with these rules:
+  - One behaviour per scenario: Given steps (with And) set the state up, exactly one When performs
+    the action under test, and one Then block (Then and its And lines) asserts that action's
+    outcome; no scenario has a second When or a second Then. Setup that sends a request is a Given
+    that requires the outcome it builds on ("the appointment has been cancelled", "an attempt to
+    have the appointment started with version 1 has been refused"), and the Then reads only the
+    When's response. A refusal and "it changes nothing" are two scenarios.
   - It uses only the HTTP API. It never reads the database to assert and never cleans up, and
     there is no test-only control endpoint, fake clock or worker trigger. The one exception is
     the `@clock` backdating step (see Time below), which writes to the database.
@@ -62,8 +68,12 @@ Where this page and the constitution disagree, the constitution wins. Fix this p
     without `@clock` scenarios needs no DSN, and a `@clock` step run without it fails with a
     message naming `make test-integration`.
   - A late arrival claims cells at the current time, which `MAN01`'s cells (07:00Z to 16:45Z) do
-    not cover around the clock, so the late-arrival scenario uses `LDS01`, whose bay and
-    technician have cells for every grid cell of the day.
+    not cover around the clock, so the late-arrival scenarios use `LDS01`, whose bay and
+    technician have cells for every grid cell of the day. The accepted late arrival takes the
+    three cells from the current grid cell. The refused ones are `MAJOR` jobs, whose eight cells
+    start one cell before the current one, refused because a booking 45 or 90 minutes after the
+    current grid cell ("... has booked ... 45 minutes after the current grid cell") holds the
+    pair. So no late-arrival scenario needs a cell free that another one holds, in any order.
 - **Tags.** Every scenario of a feature carries its `@spec-NNN` and a feature tag (`@booking`,
   `@claim-ledger`, `@idempotency`, `@concurrency`, `@bootstrap`, `@lifecycle`, `@reschedule`,
   `@no-show`). Others:
@@ -83,11 +93,12 @@ Where this page and the constitution disagree, the constitution wins. Fix this p
 
 Scheduling scenarios pick their own days, counted from the suite's "today", in disjoint windows
 (local times). Feature 001 and the lifecycle and reschedule features book dealership `MAN01`; the
-no-show feature books `LDS01`:
+no-show feature books `LDS01`. Each feature file lists its own windows at its top.
 
 | Day | Feature file | Windows |
 |---|---|---|
-| 1 (`tomorrow`) | `booking.feature` | 08:45 to 11:15, 11:30 to 12:15, 13:00 to 13:45, 15:00 to 15:45; the refusals touch nothing |
+| 0 (today) | `noshow.feature` (`LDS01`) | the accepted late arrival at the current grid cell; two bookings 45 and 90 minutes after it, for the refused ones |
+| 1 (`tomorrow`) | `booking.feature` | 08:45 to 11:15, 11:30 to 12:15, 13:00 to 13:45, 14:00 to 14:45, 15:00 to 15:45; the refusals touch nothing |
 | 2 | `booking.feature` | the least-loaded scenario, whole day |
 | 3 | `claim_ledger.feature` | 09:00 to 09:45, 10:45 to 12:45, 14:00 to 15:00 |
 | 4 | `claim_ledger.feature` | 09:00 to 10:30, 12:00 to 12:45, 13:45 to 15:45 |
@@ -95,23 +106,38 @@ no-show feature books `LDS01`:
 | 6 | `idempotency.feature` | 09:00 to 16:30 in six disjoint windows |
 | 7 | `idempotency.feature`, `concurrency.feature` | 10:00 to 10:45; 13:00 to 13:45; 15:00 to 15:45 |
 | 8 | `concurrency.feature` | 09:00 to 15:00 |
-| 9 | `lifecycle.feature` (`MAN01`) | 08:00 to 16:45, one window per scenario |
-| 9 | `noshow.feature` (`LDS01`) | 18:00 to 19:45 |
-| 10 | `lifecycle.feature` (`MAN01`) | 08:00 to 16:45 |
-| 10 | `noshow.feature` (`LDS01`) | 18:00 to 20:30 |
-| 11 | `reschedule.feature` (`MAN01`) | 09:00 to 16:45, one window per scenario |
+| 8 | `reschedule.feature` | 15:00 to 17:00 |
+| 9 | `lifecycle.feature` (`MAN01`) | 08:00 to 16:15, eleven 45-minute windows |
+| 9 | `noshow.feature` (`LDS01`) | 18:00 to 22:45 |
+| 10 | `lifecycle.feature` (`MAN01`) | 08:00 to 16:15, eleven 45-minute windows |
+| 10 | `noshow.feature` (`LDS01`) | 18:00 to 21:30 |
+| 11 | `reschedule.feature` (`MAN01`) | 08:00 to 16:45, one window per scenario |
 | 11 | `noshow.feature` (`LDS01`) | 18:00 to 18:45 |
-| 12 | `reschedule.feature` (`MAN01`) | 08:00 to 16:45, one window per scenario |
-| 13 and later | free | |
+| 12 | `reschedule.feature` (`MAN01`) | 08:00 to 17:00 |
+| 13 and later | not used | |
 
-The fixture holds cells for 14 days from the day the database starts, so day 12 is always inside
-it. A new feature takes the next free days and records them here and in its own feature file.
+The fixture holds cells for 14 days from the day the database starts (UTC), and London can be a
+day ahead of UTC, so days 1 to 12 always have cells and day 13 may not. A new feature records its
+days here and in its own feature file.
+
+A window belongs to one scenario, with two exceptions:
+
+- Two `INTERIM` scenarios may share a window when different customers book it (Alice in one,
+  Bob in the other). `INTERIM` runs on `Bay 1` or `Bay 2` with any of three technicians, so both
+  always find a pair. A window with a `MOT`, `EV_CHECK` or reassignment scenario, whose outcome
+  needs one particular pair free, belongs to that scenario alone; `MOT`'s only pair (`Bay 2`,
+  `Priya`) is the bottleneck, so `MOT` windows are spread across days.
+- The rows of an outline whose refusals change nothing share one booking, and so do the "is
+  refused" and "changes nothing" outlines of such a refusal: booking the same key again returns
+  the same, unchanged appointment.
 
 **A customer's booking keys are global across dealerships.** The unique index
-`uq_appointment_booking` on `(vehicle_id, customer_id, start_at, kind)` ignores the dealership, so
-two scenarios that book the same customer's vehicle at the same instant collide even at different
-dealerships (`409 DUPLICATE_BOOKING`). `noshow.feature` therefore books `LDS01` in the evening,
-18:00 to 20:30, when `MAN01` has no cells and no other scenario books the same customer there. A
+`uq_appointment_booking` on `(vehicle_id, customer_id, start_at, kind)` ignores the dealership and
+the service type, so two scenarios that book the same customer's vehicle at the same instant
+collide even at different dealerships (`409 DUPLICATE_BOOKING`). Two scenarios sharing a window
+therefore book different customers, and `noshow.feature` books `LDS01` in the evening, 18:00 to
+22:45, when `MAN01` has no cells and no other scenario books the same customer there. Its bookings
+around the current time use `Customer 01` and `Customer 02`, whom no other scenario books today. A
 backdated window (`@clock`) is never booked again.
 
 ### Fixture
@@ -123,7 +149,7 @@ explicitly unknown one.
 | Kind | Name | Id | Details |
 |---|---|---|---|
 | dealership | `MAN01` Manchester Central | `d0000000-0000-4000-8000-000000000001` | Europe/London, 15-minute grid, 28-day booking horizon |
-| dealership | `LDS01` Leeds North | `d0000000-0000-4000-8000-000000000002` | Europe/London, 15-minute grid, 28-day booking horizon; one bay, one technician and cells around the clock, which the `@clock` late-arrival scenario needs; it is also where a booking key is submitted at a second dealership |
+| dealership | `LDS01` Leeds North | `d0000000-0000-4000-8000-000000000002` | Europe/London, 15-minute grid, 28-day booking horizon; one bay, one technician and cells around the clock, which the `@clock` late-arrival scenarios need; it is also where a booking key is submitted at a second dealership |
 | bay | `Bay 1`, `Bay 2`, `Bay 3` | `b0000000-0000-4000-8000-00000000000{1,2,3}` | GENERAL, MOT, EV_HV; all ACTIVE |
 | technician | `Sam` | `e0000000-0000-4000-8000-000000000001` | GENERAL_SERVICE, EV_HV_L3 |
 | technician | `Priya` | `e0000000-0000-4000-8000-000000000002` | GENERAL_SERVICE, MOT_TESTER |
