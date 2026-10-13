@@ -10,9 +10,11 @@ import (
 
 	"scheduler/internal/platform"
 	"scheduler/internal/scheduling"
+	"scheduler/internal/scheduling/mysql"
 )
 
-//go:generate go tool mockgen -destination=mock_scheduling_test.go -package=service scheduler/internal/scheduling Store,Tx,WorkshopReader,CustomerReader
+//go:generate go tool mockgen -destination=mock_mysql_test.go -package=service scheduler/internal/scheduling/mysql Store,Tx
+//go:generate go tool mockgen -destination=mock_scheduling_test.go -package=service scheduler/internal/scheduling WorkshopReader,CustomerReader
 //go:generate go tool mockgen -destination=mock_service_test.go -package=service -self_package=scheduler/internal/scheduling/service scheduler/internal/scheduling/service Service
 
 // Service books, reads and moves appointments through their lifecycle.
@@ -111,14 +113,14 @@ type Record struct {
 
 // NewService builds the Scheduling service. Every dependency is passed in; main chooses the
 // real ones, tests pass mocks.
-func NewService(store scheduling.Store, workshop scheduling.WorkshopReader, customers scheduling.CustomerReader,
+func NewService(store mysql.Store, workshop scheduling.WorkshopReader, customers scheduling.CustomerReader,
 	clock platform.Clock, ids platform.IDs) Service {
 	return &service{store: store, workshop: workshop, customers: customers, clock: clock, ids: ids}
 }
 
 // service is the Scheduling service.
 type service struct {
-	store     scheduling.Store
+	store     mysql.Store
 	workshop  scheduling.WorkshopReader
 	customers scheduling.CustomerReader
 	clock     platform.Clock

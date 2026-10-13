@@ -7,7 +7,7 @@ import (
 
 // AppendOutbox appends an outbox row inside the transaction, unpublished
 // (published_at stays NULL; nothing relays it in this release). payload is stored as JSON.
-func (tx *Tx) AppendOutbox(aggregateType, aggregateID, eventType string, payload any) error {
+func (tx *tx) AppendOutbox(aggregateType, aggregateID, eventType string, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("encode %s outbox row of %s %s: %w", eventType, aggregateType, aggregateID, err)

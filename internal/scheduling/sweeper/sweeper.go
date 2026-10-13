@@ -21,7 +21,7 @@ import (
 // Actor is the audit actor of a no-show the sweeper marks.
 const Actor = "no-show-sweeper"
 
-// Appointments lists the appointments that are due; scheduling.Store implements it.
+// Appointments lists the appointments that are due; mysql.Store implements it.
 type Appointments interface {
 	DueNoShows(ctx context.Context, before time.Time) ([]scheduling.Appointment, error)
 }

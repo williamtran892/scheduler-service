@@ -20,7 +20,7 @@ const appointmentColumns = `id, tenant_id, dealership_id, customer_id, vehicle_i
 // key (vehicle, customer, start, kind) is the idempotency guard: a duplicate key is
 // scheduling.ErrDuplicateBooking, and a concurrent duplicate waits here until the first attempt
 // commits or rolls back (design 5.2).
-func (tx *Tx) InsertAppointment(a scheduling.Appointment) error {
+func (tx *tx) InsertAppointment(a scheduling.Appointment) error {
 	requests, err := json.Marshal(a.CustomerRequests)
 	if err != nil {
 		return fmt.Errorf("encode customer requests of appointment %s: %w", a.ID, err)
@@ -43,7 +43,7 @@ func (tx *Tx) InsertAppointment(a scheduling.Appointment) error {
 // one, so it always changes the row it matches and zero affected rows means the appointment moved
 // on since the caller read it (scheduling.ErrStaleVersion). A new start that is another
 // appointment's booking key is scheduling.ErrDuplicateBooking.
-func (tx *Tx) UpdateAppointment(a scheduling.Appointment, expectedVersion int) error {
+func (tx *tx) UpdateAppointment(a scheduling.Appointment, expectedVersion int) error {
 	res, err := tx.tx.ExecContext(tx.ctx, `
 		UPDATE appointment
 		   SET status = ?, start_at = ?, end_at = ?, actual_start_at = ?, actual_end_at = ?,
@@ -65,7 +65,7 @@ func (tx *Tx) UpdateAppointment(a scheduling.Appointment, expectedVersion int) e
 }
 
 // DueNoShows returns the CONFIRMED appointments that start before before, oldest first.
-func (s *Store) DueNoShows(ctx context.Context, before time.Time) ([]scheduling.Appointment, error) {
+func (s *store) DueNoShows(ctx context.Context, before time.Time) ([]scheduling.Appointment, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+appointmentColumns+` FROM appointment
 		 WHERE status = ? AND start_at < ?
@@ -90,7 +90,7 @@ func (s *Store) DueNoShows(ctx context.Context, before time.Time) ([]scheduling.
 }
 
 // Appointment loads one appointment; scheduling.ErrNotFound if there is none.
-func (s *Store) Appointment(ctx context.Context, id string) (scheduling.Appointment, error) {
+func (s *store) Appointment(ctx context.Context, id string) (scheduling.Appointment, error) {
 	a, err := scanAppointment(s.db.QueryRowContext(ctx,
 		`SELECT `+appointmentColumns+` FROM appointment WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -103,7 +103,7 @@ func (s *Store) Appointment(ctx context.Context, id string) (scheduling.Appointm
 }
 
 // AppointmentByBookingKey loads the appointment that owns key, in any status; false if none does.
-func (s *Store) AppointmentByBookingKey(ctx context.Context, key scheduling.BookingKey) (scheduling.Appointment, bool, error) {
+func (s *store) AppointmentByBookingKey(ctx context.Context, key scheduling.BookingKey) (scheduling.Appointment, bool, error) {
 	a, err := scanAppointment(s.db.QueryRowContext(ctx, `
 		SELECT `+appointmentColumns+` FROM appointment
 		 WHERE vehicle_id = ? AND customer_id = ? AND start_at = ? AND kind = ?`,

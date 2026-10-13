@@ -57,11 +57,6 @@ func (e *VersionConflictError) Error() string {
 func (e *VersionConflictError) Is(target error) bool { return target == ErrStaleVersion }
 func (e *VersionConflictError) ProblemCode() string  { return ErrStaleVersion.Code }
 
-// Slot is one alternative start offered with SLOT_TAKEN or AVAILABILITY_CHANGED.
-type Slot struct {
-	StartAt, EndAt time.Time
-}
-
 // SlotTakenError is the final SLOT_TAKEN answer; it is ErrSlotTaken. Location renders the
 // alternatives in the dealership's offset.
 type SlotTakenError struct {

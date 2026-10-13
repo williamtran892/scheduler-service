@@ -10,6 +10,7 @@ import (
 
 	"scheduler/internal/platform"
 	"scheduler/internal/scheduling"
+	"scheduler/internal/scheduling/mysql"
 )
 
 // The booking fixture the service tests share. It mirrors local/mysql/data.sql in miniature:
@@ -284,7 +285,7 @@ func (f *fixture) service() Service {
 // expectTx expects n transactions, each running its function against the mock Tx.
 func (f *fixture) expectTx(n int) {
 	f.store.EXPECT().InTx(gomock.Any(), gomock.Any()).Times(n).DoAndReturn(
-		func(_ context.Context, fn func(scheduling.Tx) error) error { return fn(f.tx) })
+		func(_ context.Context, fn func(mysql.Tx) error) error { return fn(f.tx) })
 }
 
 // attempt expects one booking attempt on a pair, in order: insert, claim; and, when the claim

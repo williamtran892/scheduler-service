@@ -7,31 +7,29 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
-
-	"scheduler/internal/scheduling"
 )
 
-// Store is Scheduling's persistence on MySQL. It implements scheduling.Store.
-type Store struct {
+// store is Scheduling's persistence on MySQL. It implements Store.
+type store struct {
 	db *sql.DB
 }
 
-var _ scheduling.Store = (*Store)(nil)
+var _ Store = (*store)(nil)
 
 // New returns a store over db.
-func New(db *sql.DB) *Store { return &Store{db: db} }
+func New(db *sql.DB) Store { return &store{db: db} }
 
-// Tx is one transaction: a booking attempt or a lifecycle transition. It implements scheduling.Tx.
-type Tx struct {
+// tx is one transaction: a booking attempt or a lifecycle transition. It implements Tx.
+type tx struct {
 	ctx context.Context
 	tx  *sql.Tx
 }
 
-var _ scheduling.Tx = (*Tx)(nil)
+var _ Tx = (*tx)(nil)
 
 // InTx runs fn in one transaction at the default isolation level: committed if fn returns nil,
 // rolled back otherwise. Each transaction is a span, so a request is one trace down to COMMIT.
-func (s *Store) InTx(ctx context.Context, fn func(tx scheduling.Tx) error) error {
+func (s *store) InTx(ctx context.Context, fn func(tx Tx) error) error {
 	ctx, span := otel.Tracer("scheduler").Start(ctx, "scheduling.InTx")
 	defer span.End()
 
@@ -40,7 +38,7 @@ func (s *Store) InTx(ctx context.Context, fn func(tx scheduling.Tx) error) error
 		span.SetStatus(codes.Error, "begin")
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	if err := fn(&Tx{ctx: ctx, tx: sqlTx}); err != nil {
+	if err := fn(&tx{ctx: ctx, tx: sqlTx}); err != nil {
 		_ = sqlTx.Rollback()
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "rolled back")

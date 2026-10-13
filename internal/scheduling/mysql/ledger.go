@@ -13,7 +13,7 @@ import (
 // ClaimPair is the only code that marks cells BOOKED. It claims the bay run, then the technician
 // run, always in that order, so every claimer takes its locks in the same order and plain claims
 // cannot deadlock each other (design 11.3; notes 4.5).
-func (tx *Tx) ClaimPair(dealershipID, bayID string, bayRun scheduling.CellRun,
+func (tx *tx) ClaimPair(dealershipID, bayID string, bayRun scheduling.CellRun,
 	techID string, techRun scheduling.CellRun, appointmentID string) error {
 	if err := tx.claimRun(dealershipID, scheduling.ResourceBay, bayID, bayRun, appointmentID, scheduling.ErrBayNotOpen); err != nil {
 		return err
@@ -24,7 +24,7 @@ func (tx *Tx) ClaimPair(dealershipID, bayID string, bayRun scheduling.CellRun,
 // ReleaseCells frees every cell the appointment owns that keep does not keep and returns how many
 // it freed. It locks the appointment's cells, filters them in Go with Keep.Keeps, and frees the
 // rest with one UPDATE per resource.
-func (tx *Tx) ReleaseCells(appointmentID string, keep scheduling.Keep) (int, error) {
+func (tx *tx) ReleaseCells(appointmentID string, keep scheduling.Keep) (int, error) {
 	rows, err := tx.tx.QueryContext(tx.ctx, `
 		SELECT resource_kind, resource_id, slot_start
 		  FROM time_slot
@@ -92,7 +92,7 @@ type cell struct {
 // that overlap its own cells. The locking read is a current read: two claimers of overlapping
 // cells serialise on the first shared row, and the loser sees BOOKED and stops before writing.
 // Without FOR UPDATE a read at REPEATABLE READ would see a snapshot and double book.
-func (tx *Tx) claimRun(dealershipID string, kind scheduling.ResourceKind, id string, run scheduling.CellRun,
+func (tx *tx) claimRun(dealershipID string, kind scheduling.ResourceKind, id string, run scheduling.CellRun,
 	appointmentID string, missing error) error {
 	rows, err := tx.tx.QueryContext(tx.ctx, `
 		SELECT slot_start, status, appointment_id
@@ -152,7 +152,7 @@ func scanCells(rows *sql.Rows) ([]cell, error) {
 // The cells booked by owner count as free: they join the islands and are left out of the loads, so
 // a reschedule sees the appointment's own time as available (design 5.4). owner is "" for a new
 // booking, which no appointment id equals.
-func (s *Store) DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, scheduling.Loads, error) {
+func (s *store) DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, scheduling.Loads, error) {
 	islands, err := s.islands(ctx, dealershipID, day, owner)
 	if err != nil {
 		return nil, nil, fmt.Errorf("free runs of dealership %s on %s: %w", dealershipID, day.LocalDate, err)
@@ -164,7 +164,7 @@ func (s *Store) DayLedger(ctx context.Context, dealershipID string, day scheduli
 	return islands, loads, nil
 }
 
-func (s *Store) islands(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, error) {
+func (s *store) islands(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		WITH free AS (
 		  SELECT ts.resource_kind, ts.resource_id, ts.slot_start, d.slot_minutes,
@@ -198,7 +198,7 @@ func (s *Store) islands(ctx context.Context, dealershipID string, day scheduling
 	return islands, rows.Err()
 }
 
-func (s *Store) loads(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) (scheduling.Loads, error) {
+func (s *store) loads(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) (scheduling.Loads, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT resource_id, COUNT(*) FROM time_slot
 		 WHERE dealership_id = ? AND status = ? AND appointment_id <> ? AND slot_start >= ? AND slot_start < ?
@@ -223,7 +223,7 @@ func (s *Store) loads(ctx context.Context, dealershipID string, day scheduling.D
 
 // WorkingCells counts the distinct cell starts in [from, to) for which the dealership has a
 // ledger cell on any resource, in any status: the dealership's working time (the ledger is the working time in this release).
-func (s *Store) WorkingCells(ctx context.Context, dealershipID string, from, to time.Time) (int, error) {
+func (s *store) WorkingCells(ctx context.Context, dealershipID string, from, to time.Time) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(DISTINCT slot_start) FROM time_slot
@@ -237,7 +237,7 @@ func (s *Store) WorkingCells(ctx context.Context, dealershipID string, from, to 
 // OwnedCells returns the cell ranges an appointment owns on its bay and on its technician, as
 // half-open intervals (contract CellRange). The end of a range is its last cell plus one cell,
 // so this query too joins dealership.slot_minutes (see DayLedger).
-func (s *Store) OwnedCells(ctx context.Context, appointmentID string) (scheduling.OwnedCells, error) {
+func (s *store) OwnedCells(ctx context.Context, appointmentID string) (scheduling.OwnedCells, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ts.resource_kind, MIN(ts.slot_start), MAX(ts.slot_start) + INTERVAL d.slot_minutes MINUTE, COUNT(*)
 		  FROM time_slot ts

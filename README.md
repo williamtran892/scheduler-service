@@ -139,9 +139,11 @@ internal/setup/         Workshop Setup (read-only): mysql implements scheduling.
                         dealerships, bays, technicians, service types
 internal/customers/     Customer & Vehicle (read-only): mysql implements scheduling.CustomerReader
 internal/scheduling/    Scheduling: grid and availability, the claim and release, appointments and
-                        their lifecycle (root, mysql, service, endpoint, sweeper); endpoint is the
-                        HTTP surface, two files: endpoint.go (route table and go-kit endpoints)
-                        and facade.go (request decoders and response encoders)
+                        their lifecycle (root, mysql, service, endpoint, sweeper); the root keeps
+                        every shared struct and the reader interfaces in service.go; mysql is its
+                        data access and declares Store and Tx (store.go); endpoint is the HTTP
+                        surface, two files: endpoint.go (route table and go-kit endpoints) and
+                        facade.go (request decoders and response encoders)
 local/mysql/            schema.sql and data.sql, the compose init scripts
 features/               Gherkin feature files
 test/acceptance/        godog suite: a black-box HTTP client with relative dates and fixture names;

@@ -105,7 +105,7 @@ func run(logger log.Logger) error {
 // newSchedulingService wires the Scheduling service: its store, the setup and customers
 // repositories as its readers, the real clock and ids, and its middleware, outermost last so
 // tracing runs first.
-func newSchedulingService(db *sql.DB, store *schedmysql.Store, logger log.Logger) schedsvc.Service {
+func newSchedulingService(db *sql.DB, store schedmysql.Store, logger log.Logger) schedsvc.Service {
 	svc := schedsvc.NewService(store, setupmysql.New(db), customersmysql.New(db), platform.RealClock{}, platform.UUIDs{})
 	svc = schedsvc.LoggingMiddleware(log.With(logger, "component", "scheduling"))(svc)
 	svc = schedsvc.InstrumentingMiddleware(otel.Meter("scheduler"))(svc)

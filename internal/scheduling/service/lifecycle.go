@@ -7,6 +7,7 @@ import (
 
 	"scheduler/internal/platform"
 	"scheduler/internal/scheduling"
+	"scheduler/internal/scheduling/mysql"
 )
 
 // The lifecycle transitions after booking (design 4.3, 5.4, 5.6, 11.4; notes 4.4): one transaction
@@ -304,7 +305,7 @@ func (s *service) apply(ctx context.Context, cmd TransitionCommand, a, next sche
 		actor = actorAnonymous
 	}
 
-	err = s.store.InTx(ctx, func(tx scheduling.Tx) error {
+	err = s.store.InTx(ctx, func(tx mysql.Tx) error {
 		if err := tx.UpdateAppointment(next, a.Version); err != nil {
 			return err
 		}

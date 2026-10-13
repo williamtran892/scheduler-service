@@ -44,8 +44,8 @@ implements Scheduling's reader interfaces. The design behind the split is in
 | `internal/platform` | Cross-cutting pieces: `Config`, `Clock` (`RealClock`, `FakeClock`), `IDs` (`UUIDs`), `OpenMySQL`, `EncodeError` and `Problem`, `Health`, `SetupOTel`. Imports no domain package |
 | `internal/setup/mysql` | Workshop Setup's `Repository`, which implements `scheduling.WorkshopReader` over `dealership`, `service_bay`, `technician`, `skill`, `technician_skill`, `service_type`, `service_type_bay_type`, `service_type_skill` and returns Scheduling's types. A service type and its skills and bay types are one query into a `ServiceRequirement`; only `ACTIVE` bays and technicians are listed, and a technician carries the skills valid on the date asked (`valid_from <= date`, `valid_to` null or `>= date`) |
 | `internal/customers/mysql` | Customer & Vehicle's `Repository`, which implements `scheduling.CustomerReader` over `customer` and `vehicle` and returns Scheduling's types |
-| `internal/scheduling` | Scheduling root, plain Go with no SQL or HTTP: the grid (`Grid` with `Align`, `Floor` and `Ceil`, `CellRun`), `ServiceRequirement` and its runs, `FeasibleStarts`, `CandidatePairs` and `NearestAlternatives`, `Appointment` and `BookingKey`, the enumerations and the appointment status transition table (`CanTransitionTo`), `Keep` (what a release leaves booked), the typed errors, and the interfaces `Store`, `Tx`, `WorkshopReader` and `CustomerReader` |
-| `internal/scheduling/mysql` | `Store` and `Tx` over `appointment`, `time_slot`, `appointment_event` and `outbox`; maps MySQL errors 1062 on `uq_appointment_booking` and 1213 to Scheduling's errors. `ClaimPair` and `ReleaseCells` in `ledger.go` are the only code that writes `time_slot` |
+| `internal/scheduling` | Scheduling root, plain Go with no SQL or HTTP. `service.go` declares every shared struct and interface in one place, in sections: the appointment and ledger types (`Appointment`, `BookingKey`, `CustomerRequests`, `Event`, `CellRange`, `OwnedCells`, `ResourceRun`, `Keep`, `Island`, `Loads`), the grid (`Grid`, `CellRun`, `Slot`), the requirement and resources (`ServiceRequirement`, `DealershipConfig`, `DayWindow`, `ServiceBay`, `Technician`, `Candidate`), the customers (`Customer`, `Vehicle`) and the readers (`WorkshopReader`, `CustomerReader`). The methods and functions stay with their algorithms: `grid.go` (`Align`, `Floor`, `Ceil`, `CellsFor`, and `CellRun`'s `Last`, `End` and `Within`), `availability.go` (`FeasibleStarts`, `CandidatePairs`, `NearestAlternatives`, `SeedFrom`), `requirement.go` (`ServiceRequirement.Runs`, `DealershipConfig.Day`, `Technician.HasAll`), `appointment.go` (`Appointment.Key`, `Keep.Keeps`), `enums.go` (the enumerations and the appointment status transition table, `CanTransitionTo`) and `errors.go` (the typed errors) |
+| `internal/scheduling/mysql` | Scheduling's own data access. `store.go` declares the interfaces `Store` and `Tx`; `db.go` has their implementation, the unexported types `store` and `tx` behind `New(db) Store`, over `appointment`, `time_slot`, `appointment_event` and `outbox`. It maps MySQL errors 1062 on `uq_appointment_booking` and 1213 to Scheduling's errors. `ClaimPair` and `ReleaseCells` in `ledger.go` are the only code that writes `time_slot` |
 | `internal/scheduling/service` | The go-kit service, with no HTTP routes or decoders: `Service` (`Book`, `Get`, `Reschedule`, `Cancel`, `CheckIn`, `Start`, `Complete`, `MarkNoShow`), its commands and `Record`, the business code, the appointment view per channel (`NewAppointmentView`, also the outbox snapshot), and the logging, instrumenting and tracing middleware |
 | `internal/scheduling/endpoint` | Scheduling's HTTP surface, in two files. `endpoint.go` has `EndpointSpec`, `Specs` (the route table: one slice literal with a row per operation), `Register`, and the go-kit endpoints (`Make<Operation>Endpoint`) with their request types. `facade.go` has the request decoders, the response encoders and the parsing they share |
 | `internal/scheduling/sweeper` | The no-show sweeper: `Service.RunOnce` marks overdue appointments through the Scheduling service's own `MarkNoShow`, and `Worker` runs it on a ticker until its context ends |
@@ -54,6 +54,11 @@ Dependency rules, each pinned by a test or a convention the reviewer checks:
 
 - The Scheduling root imports only the standard library (`internal/scheduling` has a test that
   fails otherwise). `platform` imports no domain package.
+- `scheduling/mysql` is Scheduling's own data access, not a separate service. It declares `Store`
+  and `Tx` and imports `scheduling` for the types they carry; `scheduling` never imports it, and
+  it never imports `service` or `sweeper`. `scheduling/service` imports `scheduling` and
+  `scheduling/mysql` (`mysql.Store` and `mysql.Tx`), and its unit tests use mocks generated from
+  those two interfaces and from the two readers.
 - Scheduling reaches the other two domains only through the reader interfaces it declares,
   `WorkshopReader` and `CustomerReader`. `setup/mysql` and `customers/mysql` implement them
   directly and return Scheduling's types, so they import `scheduling`; `scheduling` never
@@ -66,7 +71,7 @@ Dependency rules, each pinned by a test or a convention the reviewer checks:
   imports `endpoint`. A domain's HTTP code lives only in its `endpoint` package, and routes are
   registered only by `endpoint.Register`, which `app.NewHandler` calls.
 - The sweeper sees the Scheduling service only through two one-method interfaces, `Appointments`
-  (`DueNoShows`, implemented by the store) and `Marker` (`MarkNoShow`, implemented by the
+  (`DueNoShows`, implemented by `mysql.Store`) and `Marker` (`MarkNoShow`, implemented by the
   service), so it goes through the same middleware and the same transaction as staff.
 - Domain errors reach `platform.EncodeError` through two small interfaces, `Coded`
   (`ProblemCode() string`) and `Extended` (`ProblemExtensions() map[string]any`), so `platform`

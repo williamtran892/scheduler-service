@@ -10,6 +10,7 @@ import (
 
 	"scheduler/internal/platform"
 	"scheduler/internal/scheduling"
+	"scheduler/internal/scheduling/mysql"
 )
 
 // The booking flow is implemented here: checks in order, the booking-key lookups, candidate
@@ -326,7 +327,7 @@ func (s *service) attempt(ctx context.Context, p plan, pair scheduling.Candidate
 	}
 	snapshot := newView(rec, true)
 
-	err = s.store.InTx(ctx, func(tx scheduling.Tx) error {
+	err = s.store.InTx(ctx, func(tx mysql.Tx) error {
 		if err := tx.InsertAppointment(a); err != nil {
 			return err
 		}

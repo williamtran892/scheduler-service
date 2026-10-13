@@ -8,24 +8,6 @@ import (
 	"time"
 )
 
-// Island is a run of consecutive FREE cells on one resource, [From, To).
-type Island struct {
-	Kind       ResourceKind
-	ResourceID string
-	From, To   time.Time
-}
-
-// Loads is the number of BOOKED cells per resource id on one local day.
-type Loads map[string]int
-
-// Candidate is a (bay, technician) pair that can take both runs at a start, with its load:
-// the bay's booked cells plus the technician's booked cells that day.
-type Candidate struct {
-	BayID  string
-	TechID string
-	Load   int
-}
-
 // FeasibleStarts returns every grid start inside the day at which some single bay of an
 // allowed type and some single qualified technician each have an island containing their run
 // (design 5.1). Starts are in time order.

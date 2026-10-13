@@ -11,7 +11,7 @@ import (
 
 // AppendEvent appends an appointment_event row inside the transaction. payload is
 // stored as JSON. An empty channel, the no-show sweeper's, is stored as NULL.
-func (tx *Tx) AppendEvent(appointmentID, eventType, actor string, channel scheduling.Channel, payload any) error {
+func (tx *tx) AppendEvent(appointmentID, eventType, actor string, channel scheduling.Channel, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("encode %s event of appointment %s: %w", eventType, appointmentID, err)
@@ -27,7 +27,7 @@ func (tx *Tx) AppendEvent(appointmentID, eventType, actor string, channel schedu
 }
 
 // Events returns an appointment's audit trail, oldest first.
-func (s *Store) Events(ctx context.Context, appointmentID string) ([]scheduling.Event, error) {
+func (s *store) Events(ctx context.Context, appointmentID string) ([]scheduling.Event, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, event_type, actor, channel, occurred_at, payload
 		  FROM appointment_event WHERE appointment_id = ? ORDER BY occurred_at, id`, appointmentID)

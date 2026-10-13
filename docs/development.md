@@ -156,7 +156,9 @@ needed.
   problem code through `ProblemCode()`, and `platform` looks the status up in one table.
 - The Scheduling root imports only the standard library; Scheduling reaches the other domains
   through the reader interfaces it declares, which `setup/mysql` and `customers/mysql` implement
-  (see [System Architecture](./architecture.md)).
+  (see [System Architecture](./architecture.md)). A new shared struct or interface of the root goes
+  in `internal/scheduling/service.go`; its methods stay with their algorithm. `Store` and `Tx`
+  are declared in `internal/scheduling/mysql`, and `mysql` never imports `service` or `sweeper`.
 - Only `internal/scheduling/mysql/ledger.go` writes `time_slot` (`ClaimPair` and `ReleaseCells`);
   a unit test enforces it for production code. It skips `_test.go` files and the `test/` tree,
   where the acceptance suite's `@clock` step backdates cells, and it checks that it still reports
