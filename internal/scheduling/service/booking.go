@@ -201,21 +201,27 @@ func (s *service) validate(p plan) (plan, error) {
 }
 
 // checkWorkingTime refuses a booking whose bay run or technician run, buffers included, covers a
-// cell the dealership has no ledger cell for: in this release the ledger is working time
-// (the ledger is the working time in this release).
+// cell the dealership has no ledger cell for: in this release the ledger is the working time. One
+// query counts the cells of both runs.
 func (s *service) checkWorkingTime(ctx context.Context, p plan) error {
-	for _, run := range []scheduling.CellRun{p.bay, p.tech} {
-		n, err := s.store.WorkingCells(ctx, p.cfg.DealershipID, run.First, run.End())
-		if err != nil {
-			return err
-		}
-		if n < run.Cells {
-			return fmt.Errorf("%s is not open for the whole job, %s to %s: %w", p.cfg.Code,
-				run.First.In(p.cfg.Location).Format(time.RFC3339), run.End().In(p.cfg.Location).Format(time.RFC3339),
-				scheduling.ErrOutsideOpeningHours)
-		}
+	bayCells, techCells, err := s.store.WorkingCellCounts(ctx, p.cfg.DealershipID, p.bay, p.tech)
+	if err != nil {
+		return err
+	}
+	if bayCells < p.bay.Cells {
+		return p.outsideOpeningHours(p.bay)
+	}
+	if techCells < p.tech.Cells {
+		return p.outsideOpeningHours(p.tech)
 	}
 	return nil
+}
+
+// outsideOpeningHours is the OUTSIDE_OPENING_HOURS error for a run the ledger does not cover.
+func (p plan) outsideOpeningHours(run scheduling.CellRun) error {
+	return fmt.Errorf("%s is not open for the whole job, %s to %s: %w", p.cfg.Code,
+		run.First.In(p.cfg.Location).Format(time.RFC3339), run.End().In(p.cfg.Location).Format(time.RFC3339),
+		scheduling.ErrOutsideOpeningHours)
 }
 
 // candidates returns the (bay, technician) pairs that can take the request's runs, least-loaded

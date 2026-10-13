@@ -156,7 +156,9 @@ and completes, then render in the dealership's time zone like `startAt`.
    `start - buffer before` falls in and cover `buffer before + duration + buffer after`, rounded
    up to whole cells. They are identical today.
 8. Working time is the ledger: every cell of both runs must exist for the dealership, on any
-   resource and in any status, otherwise `422 OUTSIDE_OPENING_HOURS`.
+   resource and in any status, otherwise `422 OUTSIDE_OPENING_HOURS`. One query counts the
+   distinct cell starts of each run over the range that covers both (`WorkingCellCounts`); the
+   bay run is judged first.
 9. Some active technician must hold every required skill on the local date, otherwise
    `422 NO_QUALIFIED_TECHNICIAN`.
 10. Candidate pairs come from the free runs of the local day: a bay of an allowed type and a

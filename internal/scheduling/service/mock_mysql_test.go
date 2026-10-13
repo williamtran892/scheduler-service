@@ -149,19 +149,20 @@ func (mr *MockStoreMockRecorder) OwnedCells(ctx, appointmentID any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OwnedCells", reflect.TypeOf((*MockStore)(nil).OwnedCells), ctx, appointmentID)
 }
 
-// WorkingCells mocks base method.
-func (m *MockStore) WorkingCells(ctx context.Context, dealershipID string, from, to time.Time) (int, error) {
+// WorkingCellCounts mocks base method.
+func (m *MockStore) WorkingCellCounts(ctx context.Context, dealershipID string, bayRun, techRun scheduling.CellRun) (int, int, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "WorkingCells", ctx, dealershipID, from, to)
+	ret := m.ctrl.Call(m, "WorkingCellCounts", ctx, dealershipID, bayRun, techRun)
 	ret0, _ := ret[0].(int)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(int)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
-// WorkingCells indicates an expected call of WorkingCells.
-func (mr *MockStoreMockRecorder) WorkingCells(ctx, dealershipID, from, to any) *gomock.Call {
+// WorkingCellCounts indicates an expected call of WorkingCellCounts.
+func (mr *MockStoreMockRecorder) WorkingCellCounts(ctx, dealershipID, bayRun, techRun any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WorkingCells", reflect.TypeOf((*MockStore)(nil).WorkingCells), ctx, dealershipID, from, to)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WorkingCellCounts", reflect.TypeOf((*MockStore)(nil).WorkingCellCounts), ctx, dealershipID, bayRun, techRun)
 }
 
 // MockTx is a mock of Tx interface.

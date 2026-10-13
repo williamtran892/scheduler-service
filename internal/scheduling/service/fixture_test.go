@@ -254,9 +254,9 @@ func (f *fixture) service() Service {
 			f.ledgerOwners = append(f.ledgerOwners, owner)
 			return f.islands(day, f.ledgerCalls[day.LocalDate]), f.loads, nil
 		})
-	f.store.EXPECT().WorkingCells(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
-		func(_ context.Context, _ string, from, to time.Time) (int, error) {
-			return workingCells(from, to), nil
+	f.store.EXPECT().WorkingCellCounts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
+		func(_ context.Context, _ string, bayRun, techRun scheduling.CellRun) (int, int, error) {
+			return workingCells(bayRun.First, bayRun.End()), workingCells(techRun.First, techRun.End()), nil
 		})
 	f.store.EXPECT().AppointmentByBookingKey(gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
 		func(_ context.Context, key scheduling.BookingKey) (scheduling.Appointment, bool, error) {

@@ -221,17 +221,28 @@ func (s *store) loads(ctx context.Context, dealershipID string, day scheduling.D
 	return loads, rows.Err()
 }
 
-// WorkingCells counts the distinct cell starts in [from, to) for which the dealership has a
-// ledger cell on any resource, in any status: the dealership's working time (the ledger is the working time in this release).
-func (s *store) WorkingCells(ctx context.Context, dealershipID string, from, to time.Time) (int, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(DISTINCT slot_start) FROM time_slot
-		 WHERE dealership_id = ? AND slot_start >= ? AND slot_start < ?`, dealershipID, from, to).Scan(&n)
-	if err != nil {
-		return 0, fmt.Errorf("count working cells of dealership %s: %w", dealershipID, err)
+// WorkingCellCounts returns, for each of the two runs, how many of its cells the dealership has a
+// ledger cell for, on any resource and in any status: the dealership's working time (the ledger
+// is the working time in this release). It counts the distinct cell starts between the first and
+// the last cell of each run, in one query over the range that covers both.
+func (s *store) WorkingCellCounts(ctx context.Context, dealershipID string, bayRun, techRun scheduling.CellRun) (bayCells, techCells int, err error) {
+	from, to := bayRun.First, bayRun.End()
+	if techRun.First.Before(from) {
+		from = techRun.First
 	}
-	return n, nil
+	if techRun.End().After(to) {
+		to = techRun.End()
+	}
+	err = s.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT CASE WHEN slot_start BETWEEN ? AND ? THEN slot_start END),
+		       COUNT(DISTINCT CASE WHEN slot_start BETWEEN ? AND ? THEN slot_start END)
+		  FROM time_slot
+		 WHERE dealership_id = ? AND slot_start >= ? AND slot_start < ?`,
+		bayRun.First, bayRun.Last(), techRun.First, techRun.Last(), dealershipID, from, to).Scan(&bayCells, &techCells)
+	if err != nil {
+		return 0, 0, fmt.Errorf("count working cells of dealership %s: %w", dealershipID, err)
+	}
+	return bayCells, techCells, nil
 }
 
 // OwnedCells returns the cell ranges an appointment owns on its bay and on its technician, as

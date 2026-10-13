@@ -16,9 +16,11 @@ type Store interface {
 	// one local day at a dealership. Cells booked by owner count as free and are not counted
 	// as load; owner is "" for a new booking and the appointment being moved for a reschedule.
 	DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, scheduling.Loads, error)
-	// WorkingCells counts the distinct cell starts in [from, to) for which the dealership has
-	// a ledger cell on any resource, in any status.
-	WorkingCells(ctx context.Context, dealershipID string, from, to time.Time) (int, error)
+	// WorkingCellCounts returns, for each of the two runs, how many of its cells the dealership
+	// has a ledger cell for, on any resource and in any status: the number of distinct cell
+	// starts between the run's first and last cell. A run is inside working time when its count
+	// equals its cells. One query answers both.
+	WorkingCellCounts(ctx context.Context, dealershipID string, bayRun, techRun scheduling.CellRun) (bayCells, techCells int, err error)
 	// Appointment loads one appointment; scheduling.ErrNotFound if there is none.
 	Appointment(ctx context.Context, id string) (scheduling.Appointment, error)
 	// AppointmentByBookingKey loads the appointment that owns key, if any.
