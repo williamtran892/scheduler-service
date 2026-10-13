@@ -3,6 +3,7 @@ package scheduling
 import (
 	"database/sql/driver"
 	"fmt"
+	"slices"
 )
 
 // Enumerations stored as VARCHAR columns (deviation D3). Each type parses, validates and
@@ -51,9 +52,19 @@ func ParseAppointmentStatus(s string) (AppointmentStatus, error) {
 
 func (s *AppointmentStatus) Scan(src any) error { return scanEnum(src, s, ParseAppointmentStatus) }
 
+// appointmentTransitions is the state machine of design 4.3 (notes 5.4): the statuses each
+// status may move to. COMPLETED and CANCELLED are final, and so is NO_SHOW apart from the late
+// arrival.
+var appointmentTransitions = map[AppointmentStatus][]AppointmentStatus{
+	StatusConfirmed:  {StatusConfirmed, StatusCheckedIn, StatusCancelled, StatusNoShow},
+	StatusNoShow:     {StatusCheckedIn},
+	StatusCheckedIn:  {StatusInProgress, StatusCancelled},
+	StatusInProgress: {StatusCompleted},
+}
+
 // CanTransitionTo reports whether the state machine (design 4.3, notes 5.4) allows s → t.
 func (s AppointmentStatus) CanTransitionTo(t AppointmentStatus) bool {
-	panic("not implemented")
+	return slices.Contains(appointmentTransitions[s], t)
 }
 
 func (s AppointmentStatus) Value() (driver.Value, error) { return string(s), nil }

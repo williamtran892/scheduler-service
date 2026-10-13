@@ -27,7 +27,7 @@ type Config struct {
 	OTelExporter    string        // OTEL_EXPORTER: none, stdout or otlp
 	ShutdownTimeout time.Duration // SHUTDOWN_TIMEOUT
 
-	// The no-show sweeper (feature 002); not read yet.
+	// The no-show sweeper (feature 002).
 	NoShowGrace         time.Duration // NO_SHOW_GRACE: start plus this, passed, is a no-show
 	NoShowSweepInterval time.Duration // NO_SHOW_SWEEP_INTERVAL: how often the sweeper runs
 }
@@ -57,7 +57,32 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		cfg.ShutdownTimeout = d
 	}
 
+	var err error
+	if cfg.NoShowGrace, err = positiveDuration(getenv, "NO_SHOW_GRACE", 30*time.Minute); err != nil {
+		return Config{}, err
+	}
+	if cfg.NoShowSweepInterval, err = positiveDuration(getenv, "NO_SHOW_SWEEP_INTERVAL", time.Minute); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
+}
+
+// positiveDuration reads the Go duration in the variable name, def when it is unset, and rejects
+// one that does not parse or is not greater than zero.
+func positiveDuration(getenv func(string) string, name string, def time.Duration) (time.Duration, error) {
+	v := getenv(name)
+	if v == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", name, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s: %q must be greater than zero", name, v)
+	}
+	return d, nil
 }
 
 func orDefault(v, def string) string {

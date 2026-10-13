@@ -39,10 +39,10 @@ var (
 	ErrDuplicateBooking      = &Error{Code: "DUPLICATE_BOOKING", Message: "booking key already has an appointment"}
 	ErrDeadlockVictim        = &Error{Code: "SLOT_TAKEN", Message: "deadlock victim"}
 
-	// Lifecycle errors (feature 002). Not implemented yet: they carry no problem code.
-	ErrStaleVersion      = &Error{Message: "not implemented"}
-	ErrInvalidTransition = &Error{Message: "not implemented"}
-	ErrForbidden         = &Error{Message: "not implemented"}
+	// Lifecycle errors (feature 002).
+	ErrStaleVersion      = &Error{Code: "VERSION_CONFLICT", Message: "appointment version conflict"}
+	ErrInvalidTransition = &Error{Code: "INVALID_TRANSITION", Message: "transition not allowed from the appointment's status"}
+	ErrForbidden         = &Error{Code: "FORBIDDEN", Message: "the calling channel may not perform this action"}
 )
 
 // VersionConflictError is the final VERSION_CONFLICT answer when the caller's expectedVersion is
@@ -51,9 +51,11 @@ type VersionConflictError struct {
 	Current, Sent int
 }
 
-func (e *VersionConflictError) Error() string        { panic("not implemented") }
-func (e *VersionConflictError) Is(target error) bool { panic("not implemented") }
-func (e *VersionConflictError) ProblemCode() string  { panic("not implemented") }
+func (e *VersionConflictError) Error() string {
+	return fmt.Sprintf("Appointment is at version %d; you sent %d.", e.Current, e.Sent)
+}
+func (e *VersionConflictError) Is(target error) bool { return target == ErrStaleVersion }
+func (e *VersionConflictError) ProblemCode() string  { return ErrStaleVersion.Code }
 
 // Slot is one alternative start offered with SLOT_TAKEN or AVAILABILITY_CHANGED.
 type Slot struct {
