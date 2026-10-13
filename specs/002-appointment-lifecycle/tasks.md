@@ -92,43 +92,43 @@ Single Go module at the repository root: `cmd/`, `internal/`, `local/mysql/`, `f
 
 ## Phase 5: Green, scheduling root and platform
 
-- [ ] T035 [P] Implement `Grid.Floor`, `Grid.Ceil` in internal/scheduling/grid.go until T017 passes
-- [ ] T036 [P] Implement the transition table and `CanTransitionTo` in internal/scheduling/enums.go until T018 passes
-- [ ] T037 [P] Implement `Keep.Keeps` in internal/scheduling/appointment.go until T019 passes
-- [ ] T038 [P] Give the new errors their codes and implement `VersionConflictError` in internal/scheduling/errors.go until T020 and T031 pass
-- [ ] T039 [P] Read `NO_SHOW_GRACE` and `NO_SHOW_SWEEP_INTERVAL` in internal/platform/config.go until T021 passes
+- [x] T035 [P] Implement `Grid.Floor`, `Grid.Ceil` in internal/scheduling/grid.go until T017 passes
+- [x] T036 [P] Implement the transition table and `CanTransitionTo` in internal/scheduling/enums.go until T018 passes
+- [x] T037 [P] Implement `Keep.Keeps` in internal/scheduling/appointment.go until T019 passes
+- [x] T038 [P] Give the new errors their codes and implement `VersionConflictError` in internal/scheduling/errors.go until T020 and T031 pass
+- [x] T039 [P] Read `NO_SHOW_GRACE` and `NO_SHOW_SWEEP_INTERVAL` in internal/platform/config.go until T021 passes
 
 ---
 
 ## Phase 6: Green, scheduling MySQL
 
-- [ ] T040 [US1] [US3] [US4] Read and write `actual_start_at`, `actual_end_at`; implement `Tx.UpdateAppointment` (`UPDATE ... WHERE id = ? AND version = ?`, zero rows → `ErrStaleVersion`, 1062 on `uq_appointment_booking` → `ErrDuplicateBooking`) and `Store.DueNoShows` (`CONFIRMED`, `start_at < ?`, oldest first) in internal/scheduling/mysql/appointments.go
-- [ ] T041 [US2] [US3] Implement `Tx.ReleaseCells` in internal/scheduling/mysql/ledger.go per research R3 (lock by `appointment_id` `FOR UPDATE`, filter with `Keep.Keeps`, one `UPDATE time_slot SET status = 'FREE', appointment_id = NULL, version = version + 1` per resource); the claim treats cells owned by the claimer as claimable (R2); `DayLedger` counts the owner's cells as free and leaves them out of the loads; T013 still passes
+- [x] T040 [US1] [US3] [US4] Read and write `actual_start_at`, `actual_end_at`; implement `Tx.UpdateAppointment` (`UPDATE ... WHERE id = ? AND version = ?`, zero rows → `ErrStaleVersion`, 1062 on `uq_appointment_booking` → `ErrDuplicateBooking`) and `Store.DueNoShows` (`CONFIRMED`, `start_at < ?`, oldest first) in internal/scheduling/mysql/appointments.go
+- [x] T041 [US2] [US3] Implement `Tx.ReleaseCells` in internal/scheduling/mysql/ledger.go per research R3 (lock by `appointment_id` `FOR UPDATE`, filter with `Keep.Keeps`, one `UPDATE time_slot SET status = 'FREE', appointment_id = NULL, version = version + 1` per resource); the claim treats cells owned by the claimer as claimable (R2); `DayLedger` counts the owner's cells as free and leaves them out of the loads; T013 still passes
 
 ---
 
 ## Phase 7: Green, scheduling service
 
-- [ ] T042 [US1] [US2] [US5] Implement the transition helper (FR-003 order, version-guarded update first, event, outbox) and `Cancel`, `CheckIn` from `CONFIRMED`, `Start`, `Complete`, `MarkNoShow` in internal/scheduling/service/lifecycle.go until T023 to T025 pass
-- [ ] T043 [US3] [US4] Generalise booking's plan (owner, pins, current pair first; alternatives with the owner) in internal/scheduling/service/booking.go and implement `Reschedule` and the late-arrival placement in internal/scheduling/service/reschedule.go until T026 to T028 pass; feature 001's booking tests still pass
-- [ ] T044 [P] [US1] Render `actualStartAt`, `actualEndAt` in internal/scheduling/service/view.go until T022 passes
-- [ ] T045 [US5] Implement the six endpoints, decoders and routes (`POST /appointments/{appointmentId}/reschedule|cancel|check-in|start|complete|no-show`) in internal/scheduling/service/endpoint.go and transport.go until T029 passes
-- [ ] T046 [P] Implement the six middleware methods in internal/scheduling/service/middleware.go until T030 passes
+- [x] T042 [US1] [US2] [US5] Implement the transition helper (FR-003 order, version-guarded update first, event, outbox) and `Cancel`, `CheckIn` from `CONFIRMED`, `Start`, `Complete`, `MarkNoShow` in internal/scheduling/service/lifecycle.go until T023 to T025 pass
+- [x] T043 [US3] [US4] Generalise booking's plan (owner, pins, current pair first; alternatives with the owner) in internal/scheduling/service/booking.go and implement `Reschedule` and the late-arrival placement in internal/scheduling/service/reschedule.go until T026 to T028 pass; feature 001's booking tests still pass
+- [x] T044 [P] [US1] Render `actualStartAt`, `actualEndAt` in internal/scheduling/service/view.go until T022 passes
+- [x] T045 [US5] Implement the six endpoints, decoders and routes (`POST /appointments/{appointmentId}/reschedule|cancel|check-in|start|complete|no-show`) in internal/scheduling/service/endpoint.go and transport.go until T029 passes
+- [x] T046 [P] Implement the six middleware methods in internal/scheduling/service/middleware.go until T030 passes
 
 ---
 
 ## Phase 8: Green, sweeper and wiring
 
-- [ ] T047 [US4] Implement `RunOnce` and `Worker.Run` in internal/scheduling/sweeper/sweeper.go until T032 passes
-- [ ] T048 [US4] Wire the sweeper over the wrapped Service and add its worker to the errgroup in cmd/scheduler/main.go, with `NoShowGrace` and `NoShowSweepInterval` from the config
+- [x] T047 [US4] Implement `RunOnce` and `Worker.Run` in internal/scheduling/sweeper/sweeper.go until T032 passes
+- [x] T048 [US4] Wire the sweeper over the wrapped Service and add its worker to the errgroup in cmd/scheduler/main.go, with `NoShowGrace` and `NoShowSweepInterval` from the config
 
 ---
 
 ## Phase 9: Green gate
 
-- [ ] T049 `make test` green with `-race`
-- [ ] T050 `GODOG_TAGS=@spec-002 ./scripts/integration.sh` green (50 executed scenarios), then `make test-integration` green including `@spec-001` and `@bootstrap`
-- [ ] T051 `make lint`, `make vet`, `make check-generate` clean
+- [x] T049 `make test` green with `-race`
+- [x] T050 `GODOG_TAGS=@spec-002 ./scripts/integration.sh` green (50 executed scenarios), then `make test-integration` green including `@spec-001` and `@bootstrap`
+- [x] T051 `make lint`, `make vet`, `make check-generate` clean
 
 ---
 
