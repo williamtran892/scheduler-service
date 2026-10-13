@@ -12,6 +12,14 @@ import (
 type Endpoints struct {
 	BookEndpoint endpoint.Endpoint
 	GetEndpoint  endpoint.Endpoint
+
+	// Lifecycle endpoints (feature 002); not made yet.
+	RescheduleEndpoint endpoint.Endpoint
+	CancelEndpoint     endpoint.Endpoint
+	CheckInEndpoint    endpoint.Endpoint
+	StartEndpoint      endpoint.Endpoint
+	CompleteEndpoint   endpoint.Endpoint
+	NoShowEndpoint     endpoint.Endpoint
 }
 
 // MakeServerEndpoints adapts s to endpoints. Business failures travel as the response's Err.

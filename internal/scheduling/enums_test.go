@@ -91,3 +91,28 @@ func TestChannel_IsCustomer(t *testing.T) {
 		}
 	}
 }
+
+// The state machine of design 4.3, as notes 5.4 tabulate it. Every one of the 36 (from, to)
+// pairs is checked, so a transition cannot be added or lost silently.
+func TestAppointmentStatus_CanTransitionToFollowsTheStateMachine(t *testing.T) {
+	allowed := map[AppointmentStatus][]AppointmentStatus{
+		StatusConfirmed:  {StatusConfirmed, StatusCheckedIn, StatusCancelled, StatusNoShow},
+		StatusNoShow:     {StatusCheckedIn},
+		StatusCheckedIn:  {StatusInProgress, StatusCancelled},
+		StatusInProgress: {StatusCompleted},
+	}
+	all := []AppointmentStatus{StatusConfirmed, StatusCheckedIn, StatusInProgress, StatusCompleted, StatusCancelled, StatusNoShow}
+	for _, from := range all {
+		for _, to := range all {
+			want := false
+			for _, s := range allowed[from] {
+				if s == to {
+					want = true
+				}
+			}
+			if got := from.CanTransitionTo(to); got != want {
+				t.Errorf("%s → %s allowed = %v, want %v", from, to, got, want)
+			}
+		}
+	}
+}

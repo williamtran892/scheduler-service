@@ -16,8 +16,9 @@ INSERT INTO tenant (id, name) VALUES
 
 INSERT INTO dealership (id, tenant_id, code, name, timezone, slot_minutes, booking_horizon_days, materialise_horizon_days) VALUES
   ('d0000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'MAN01', 'Manchester Central', 'Europe/London', 15, 28, 60),
-  -- LDS01 has no resources and no cells: it exists so a booking key can be submitted at a
-  -- second dealership (idempotency.feature).
+  -- LDS01 exists so a booking key can be submitted at a second dealership (idempotency.feature).
+  -- Its one bay and one technician have cells around the clock (below), so a late arrival, which
+  -- claims cells at the current time, has cells whatever the hour the suite runs (noshow.feature).
   ('d0000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000001', 'LDS01', 'Leeds North', 'Europe/London', 15, 28, 60);
 
 -- Resources -------------------------------------------------------------------------------
@@ -114,5 +115,31 @@ WITH RECURSIVE
     SELECT 'TECHNICIAN', id FROM technician WHERE dealership_id = 'd0000000-0000-4000-8000-000000000001')
 SELECT 'd0000000-0000-4000-8000-000000000001', r.kind, r.id,
        TIMESTAMP(CURRENT_DATE) + INTERVAL d.d DAY + INTERVAL 7 HOUR + INTERVAL 15 * c.k MINUTE,
+       'FREE'
+  FROM resources r CROSS JOIN days d CROSS JOIN cells c;
+
+-- LDS01: one bay and one technician, with cells around the clock -----------------------------
+-- A late arrival claims cells starting at the current grid cell (noshow.feature). MAN01's cells
+-- cover 07:00Z to 17:00Z only, so LDS01 gets every 15-minute cell of the day, CURRENT_DATE to
+-- CURRENT_DATE + 13: 2 resources x 14 days x 96 cells = 2 688. Nothing at MAN01 can see them.
+INSERT INTO service_bay (id, tenant_id, dealership_id, name, type, status) VALUES
+  ('b0000000-0000-4000-8000-000000000011', 'a0000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000002', 'Bay L1', 'GENERAL', 'ACTIVE');
+
+INSERT INTO technician (id, tenant_id, dealership_id, display_name, status) VALUES
+  ('e0000000-0000-4000-8000-000000000011', 'a0000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000002', 'Jo', 'ACTIVE');
+
+INSERT INTO technician_skill (technician_id, skill_id, valid_from, valid_to) VALUES
+  ('e0000000-0000-4000-8000-000000000011', '5c000000-0000-4000-8000-000000000001', CURRENT_DATE - INTERVAL 1 YEAR, NULL);  -- Jo: GENERAL_SERVICE
+
+INSERT INTO time_slot (dealership_id, resource_kind, resource_id, slot_start, status)
+WITH RECURSIVE
+  days (d) AS (SELECT 0 UNION ALL SELECT d + 1 FROM days WHERE d < 13),
+  cells (k) AS (SELECT 0 UNION ALL SELECT k + 1 FROM cells WHERE k < 95),
+  resources (kind, id) AS (
+    SELECT 'BAY', id FROM service_bay WHERE dealership_id = 'd0000000-0000-4000-8000-000000000002'
+    UNION ALL
+    SELECT 'TECHNICIAN', id FROM technician WHERE dealership_id = 'd0000000-0000-4000-8000-000000000002')
+SELECT 'd0000000-0000-4000-8000-000000000002', r.kind, r.id,
+       TIMESTAMP(CURRENT_DATE) + INTERVAL d.d DAY + INTERVAL 15 * c.k MINUTE,
        'FREE'
   FROM resources r CROSS JOIN days d CROSS JOIN cells c;

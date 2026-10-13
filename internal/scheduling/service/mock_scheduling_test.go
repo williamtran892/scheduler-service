@@ -74,9 +74,9 @@ func (mr *MockStoreMockRecorder) AppointmentByBookingKey(ctx, key any) *gomock.C
 }
 
 // DayLedger mocks base method.
-func (m *MockStore) DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow) ([]scheduling.Island, scheduling.Loads, error) {
+func (m *MockStore) DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, scheduling.Loads, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DayLedger", ctx, dealershipID, day)
+	ret := m.ctrl.Call(m, "DayLedger", ctx, dealershipID, day, owner)
 	ret0, _ := ret[0].([]scheduling.Island)
 	ret1, _ := ret[1].(scheduling.Loads)
 	ret2, _ := ret[2].(error)
@@ -84,9 +84,24 @@ func (m *MockStore) DayLedger(ctx context.Context, dealershipID string, day sche
 }
 
 // DayLedger indicates an expected call of DayLedger.
-func (mr *MockStoreMockRecorder) DayLedger(ctx, dealershipID, day any) *gomock.Call {
+func (mr *MockStoreMockRecorder) DayLedger(ctx, dealershipID, day, owner any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DayLedger", reflect.TypeOf((*MockStore)(nil).DayLedger), ctx, dealershipID, day)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DayLedger", reflect.TypeOf((*MockStore)(nil).DayLedger), ctx, dealershipID, day, owner)
+}
+
+// DueNoShows mocks base method.
+func (m *MockStore) DueNoShows(ctx context.Context, before time.Time) ([]scheduling.Appointment, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DueNoShows", ctx, before)
+	ret0, _ := ret[0].([]scheduling.Appointment)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// DueNoShows indicates an expected call of DueNoShows.
+func (mr *MockStoreMockRecorder) DueNoShows(ctx, before any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DueNoShows", reflect.TypeOf((*MockStore)(nil).DueNoShows), ctx, before)
 }
 
 // Events mocks base method.
@@ -226,6 +241,35 @@ func (m *MockTx) InsertAppointment(a scheduling.Appointment) error {
 func (mr *MockTxMockRecorder) InsertAppointment(a any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertAppointment", reflect.TypeOf((*MockTx)(nil).InsertAppointment), a)
+}
+
+// ReleaseCells mocks base method.
+func (m *MockTx) ReleaseCells(appointmentID string, keep scheduling.Keep) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReleaseCells", appointmentID, keep)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ReleaseCells indicates an expected call of ReleaseCells.
+func (mr *MockTxMockRecorder) ReleaseCells(appointmentID, keep any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseCells", reflect.TypeOf((*MockTx)(nil).ReleaseCells), appointmentID, keep)
+}
+
+// UpdateAppointment mocks base method.
+func (m *MockTx) UpdateAppointment(a scheduling.Appointment, expectedVersion int) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateAppointment", a, expectedVersion)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateAppointment indicates an expected call of UpdateAppointment.
+func (mr *MockTxMockRecorder) UpdateAppointment(a, expectedVersion any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAppointment", reflect.TypeOf((*MockTx)(nil).UpdateAppointment), a, expectedVersion)
 }
 
 // MockWorkshopReader is a mock of WorkshopReader interface.

@@ -90,3 +90,97 @@ func TestTracingMiddleware_OpensASpanPerCallAndRecordsTheError(t *testing.T) {
 		t.Errorf("second span %s status %v, want scheduling.Get without an error", spans[1].Name(), spans[1].Status())
 	}
 }
+
+// lifecycleCalls calls each lifecycle method once on svc, so a middleware can be checked for all
+// six. The commands name appointment "appt-9".
+func lifecycleCalls(svc Service) map[string]func() {
+	tc := TransitionCommand{AppointmentID: "appt-9", ExpectedVersion: 2, Channel: scheduling.ChannelAdvisorConsole}
+	ctx := context.Background()
+	return map[string]func(){
+		"Reschedule": func() { _, _ = svc.Reschedule(ctx, RescheduleCommand{TransitionCommand: tc}) },
+		"Cancel":     func() { _, _ = svc.Cancel(ctx, tc) },
+		"CheckIn":    func() { _, _ = svc.CheckIn(ctx, CheckInCommand{TransitionCommand: tc}) },
+		"Start":      func() { _, _ = svc.Start(ctx, StartCommand{TransitionCommand: tc}) },
+		"Complete":   func() { _, _ = svc.Complete(ctx, CompleteCommand{TransitionCommand: tc}) },
+		"MarkNoShow": func() { _, _ = svc.MarkNoShow(ctx, tc) },
+	}
+}
+
+// nextReturning is a mock Service whose lifecycle methods all fail with err.
+func nextReturning(t *testing.T, err error) *MockService {
+	next := NewMockService(gomock.NewController(t))
+	next.EXPECT().Reschedule(gomock.Any(), gomock.Any()).AnyTimes().Return(Record{}, err)
+	next.EXPECT().Cancel(gomock.Any(), gomock.Any()).AnyTimes().Return(Record{}, err)
+	next.EXPECT().CheckIn(gomock.Any(), gomock.Any()).AnyTimes().Return(Record{}, err)
+	next.EXPECT().Start(gomock.Any(), gomock.Any()).AnyTimes().Return(Record{}, err)
+	next.EXPECT().Complete(gomock.Any(), gomock.Any()).AnyTimes().Return(Record{}, err)
+	next.EXPECT().MarkNoShow(gomock.Any(), gomock.Any()).AnyTimes().Return(Record{}, err)
+	return next
+}
+
+func TestLoggingMiddleware_LogsEveryLifecycleMethodWithItsAppointment(t *testing.T) {
+	for method := range lifecycleCalls(nil) {
+		t.Run(method, func(t *testing.T) {
+			var buf bytes.Buffer
+			svc := LoggingMiddleware(log.NewLogfmtLogger(&buf))(nextReturning(t, scheduling.ErrInvalidTransition))
+			lifecycleCalls(svc)[method]()
+			line := buf.String()
+			for _, want := range []string{"method=" + method, "appointment=appt-9", "took=", "err="} {
+				if !strings.Contains(line, want) {
+					t.Errorf("log %q has no %q", line, want)
+				}
+			}
+		})
+	}
+}
+
+func TestInstrumentingMiddleware_CountsEveryLifecycleMethodWithItsCode(t *testing.T) {
+	for method := range lifecycleCalls(nil) {
+		t.Run(method, func(t *testing.T) {
+			reader := sdkmetric.NewManualReader()
+			meter := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test")
+			svc := InstrumentingMiddleware(meter)(nextReturning(t, &scheduling.VersionConflictError{Current: 3, Sent: 2}))
+			lifecycleCalls(svc)[method]()
+
+			var rm metricdata.ResourceMetrics
+			if err := reader.Collect(context.Background(), &rm); err != nil {
+				t.Fatalf("collect: %v", err)
+			}
+			counted := false
+			for _, sm := range rm.ScopeMetrics {
+				for _, m := range sm.Metrics {
+					sum, ok := m.Data.(metricdata.Sum[int64])
+					if m.Name != "scheduling.requests" || !ok {
+						continue
+					}
+					for _, dp := range sum.DataPoints {
+						got, _ := dp.Attributes.Value(attribute.Key("method"))
+						code, _ := dp.Attributes.Value(attribute.Key("code"))
+						if got.AsString() == method && code.AsString() == "VERSION_CONFLICT" && dp.Value == 1 {
+							counted = true
+						}
+					}
+				}
+			}
+			if !counted {
+				t.Errorf("no scheduling.requests point for %s/VERSION_CONFLICT; metrics %+v", method, rm.ScopeMetrics)
+			}
+		})
+	}
+}
+
+func TestTracingMiddleware_OpensASpanPerLifecycleMethod(t *testing.T) {
+	for method := range lifecycleCalls(nil) {
+		t.Run(method, func(t *testing.T) {
+			rec := tracetest.NewSpanRecorder()
+			tracer := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)).Tracer("test")
+			svc := TracingMiddleware(tracer)(nextReturning(t, scheduling.ErrForbidden))
+			lifecycleCalls(svc)[method]()
+
+			spans := rec.Ended()
+			if len(spans) != 1 || spans[0].Name() != "scheduling."+method || spans[0].Status().Code != codes.Error {
+				t.Fatalf("spans = %v, want one scheduling.%s with an error", spans, method)
+			}
+		})
+	}
+}

@@ -10,8 +10,9 @@ type Store interface {
 	// InTx runs fn in one transaction: committed if fn returns nil, rolled back otherwise.
 	InTx(ctx context.Context, fn func(tx Tx) error) error
 	// DayLedger returns the islands of FREE cells and the BOOKED cell count per resource for
-	// one local day at a dealership.
-	DayLedger(ctx context.Context, dealershipID string, day DayWindow) ([]Island, Loads, error)
+	// one local day at a dealership. Cells booked by owner count as free and are not counted
+	// as load; owner is "" for a new booking and the appointment being moved for a reschedule.
+	DayLedger(ctx context.Context, dealershipID string, day DayWindow, owner string) ([]Island, Loads, error)
 	// WorkingCells counts the distinct cell starts in [from, to) for which the dealership has
 	// a ledger cell on any resource, in any status.
 	WorkingCells(ctx context.Context, dealershipID string, from, to time.Time) (int, error)
@@ -23,6 +24,8 @@ type Store interface {
 	OwnedCells(ctx context.Context, appointmentID string) (OwnedCells, error)
 	// Events returns an appointment's audit trail, oldest first.
 	Events(ctx context.Context, appointmentID string) ([]Event, error)
+	// DueNoShows returns the CONFIRMED appointments that start before before, oldest first.
+	DueNoShows(ctx context.Context, before time.Time) ([]Appointment, error)
 }
 
 // Tx is the part of Store that runs inside one booking transaction.
@@ -34,6 +37,14 @@ type Tx interface {
 	// ErrSlotTaken; a missing cell is ErrBayNotOpen or ErrTechnicianNotWorking; a deadlock is
 	// ErrDeadlockVictim.
 	ClaimPair(dealershipID, bayID string, bayRun CellRun, techID string, techRun CellRun, appointmentID string) error
+	// UpdateAppointment writes a's new state if the stored version is expectedVersion, setting
+	// version = expectedVersion + 1. Zero rows matched is ErrStaleVersion; a new start that is
+	// another appointment's booking key is ErrDuplicateBooking. It is the first statement of
+	// every transition.
+	UpdateAppointment(a Appointment, expectedVersion int) error
+	// ReleaseCells frees every cell the appointment owns that keep does not keep and returns
+	// how many it freed.
+	ReleaseCells(appointmentID string, keep Keep) (int, error)
 	// AppendEvent appends an appointment_event row.
 	AppendEvent(appointmentID, eventType, actor string, channel Channel, payload any) error
 	// AppendOutbox appends an outbox row.

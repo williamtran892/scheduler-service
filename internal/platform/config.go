@@ -26,6 +26,10 @@ type Config struct {
 	ServiceName     string        // OTEL_SERVICE_NAME
 	OTelExporter    string        // OTEL_EXPORTER: none, stdout or otlp
 	ShutdownTimeout time.Duration // SHUTDOWN_TIMEOUT
+
+	// The no-show sweeper (feature 002); not read yet.
+	NoShowGrace         time.Duration // NO_SHOW_GRACE: start plus this, passed, is a no-show
+	NoShowSweepInterval time.Duration // NO_SHOW_SWEEP_INTERVAL: how often the sweeper runs
 }
 
 // LoadConfig builds a Config from getenv (os.Getenv in main, a map in tests),

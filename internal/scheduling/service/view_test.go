@@ -142,3 +142,24 @@ func splitPath(p string) []string {
 	}
 	return append(out, p[start:])
 }
+
+func TestView_ActualTimesAreRenderedInTheDealershipOffsetOnceSet(t *testing.T) {
+	r := evRecord()
+	started, ended := on("08:05"), on("09:50")
+	r.Appointment.ActualStartAt, r.Appointment.ActualEndAt = &started, &ended
+	for _, ch := range []scheduling.Channel{scheduling.ChannelAdvisorConsole, scheduling.ChannelCustomerWeb} {
+		m := viewJSON(t, r, ch)
+		if got := m["actualStartAt"]; got != "2026-10-20T09:05:00+01:00" {
+			t.Errorf("%s: actualStartAt = %v, want 2026-10-20T09:05:00+01:00", ch, got)
+		}
+		if got := m["actualEndAt"]; got != "2026-10-20T10:50:00+01:00" {
+			t.Errorf("%s: actualEndAt = %v, want 2026-10-20T10:50:00+01:00", ch, got)
+		}
+	}
+
+	r.Appointment.ActualEndAt = nil
+	m := viewJSON(t, r, scheduling.ChannelAdvisorConsole)
+	if v, ok := m["actualEndAt"]; !ok || v != nil {
+		t.Errorf("actualEndAt = %v (present %v), want null before completion", v, ok)
+	}
+}

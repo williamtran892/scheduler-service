@@ -14,18 +14,20 @@ Feature: No-shows and late arrivals
   days into the past through the suite's database connection, the only write the suite makes,
   and then poll the public record until a deadline. In the test configuration the sweeper runs
   about every second.
-  Calendar: this file books LDS01 only in 9 days' time (10:00 to 11:45), in 10 days' time
-  (12:00 to 14:30) and in 11 days' time (10:00 to 10:45); the late arrival takes LDS01's cells
-  at the current time. Backdated windows lose their cells and are never booked again.
+  Calendar: this file books LDS01 only in 9 days' time (18:00 to 19:45), in 10 days' time
+  (18:00 to 20:30) and in 11 days' time (18:00 to 18:45); the late arrival takes LDS01's cells
+  at the current time. These are evening hours, when MAN01 has no cells, so no booking key here
+  (vehicle, customer, start, kind) can collide with one another feature file books for the same
+  customer at MAN01. Backdated windows lose their cells and are never booked again.
 
   Background:
     Given the workshop fixture for dealership "LDS01"
 
   @clock
   Scenario: A late arrival is checked in onto the cells free now, and refused when none are
-    Given "Alice" has booked "INTERIM" for "YK21 ABC" in 9 days at 10:00 at dealership "LDS01"
+    Given "Alice" has booked "INTERIM" for "YK21 ABC" in 9 days at 18:00 at dealership "LDS01"
     And the appointment has been marked a no-show
-    And "Bob" has booked "INTERIM" for "BD70 XYZ" in 9 days at 11:00 at dealership "LDS01"
+    And "Bob" has booked "INTERIM" for "BD70 XYZ" in 9 days at 19:00 at dealership "LDS01"
     And the appointment has been marked a no-show
     When the appointment of "Alice" is checked in
     Then the response is 200
@@ -40,7 +42,7 @@ Feature: No-shows and late arrivals
 
   @clock
   Scenario: The sweeper marks a confirmed appointment as a no-show once its grace period has passed
-    Given "Alice" has booked "INTERIM" for "YK21 ABC" in 10 days at 12:00 at dealership "LDS01"
+    Given "Alice" has booked "INTERIM" for "YK21 ABC" in 10 days at 18:00 at dealership "LDS01"
     When the appointment is backdated by 14 days
     Then the appointment becomes "NO_SHOW" within 10 seconds
     And the appointment status is "NO_SHOW" at version 2
@@ -50,10 +52,10 @@ Feature: No-shows and late arrivals
 
   @clock
   Scenario: The sweeper leaves an appointment that has been checked in
-    Given "Bob" has booked "INTERIM" for "BD70 XYZ" in 10 days at 13:00 at dealership "LDS01"
+    Given "Bob" has booked "INTERIM" for "BD70 XYZ" in 10 days at 19:00 at dealership "LDS01"
     And the appointment has been checked in
     And the appointment is backdated by 14 days
-    And "Alice" has booked "INTERIM" for "YK21 ABC" in 10 days at 13:45 at dealership "LDS01"
+    And "Alice" has booked "INTERIM" for "YK21 ABC" in 10 days at 19:45 at dealership "LDS01"
     When the appointment of "Alice" is backdated by 14 days
     Then the appointment of "Alice" becomes "NO_SHOW" within 10 seconds
     When the appointment of "Bob" is fetched through "ADVISOR_CONSOLE"
@@ -62,7 +64,7 @@ Feature: No-shows and late arrivals
 
   @clock @design-11.3
   Scenario: Completing a job after its booked time keeps the cells already in the past
-    Given "Alice" has booked "INTERIM" for "YK21 ABC" in 11 days at 10:00 at dealership "LDS01"
+    Given "Alice" has booked "INTERIM" for "YK21 ABC" in 11 days at 18:00 at dealership "LDS01"
     And the appointment has been checked in
     And the appointment has been started
     And the appointment is backdated by 14 days

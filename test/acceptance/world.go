@@ -3,12 +3,14 @@ package acceptance
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,6 +19,12 @@ import (
 type target struct {
 	baseURL string
 	client  *http.Client
+
+	// The database connection of @clock scenarios, opened on first use from SCHEDULER_TEST_DSN
+	// (steps_clock.go). A run without them never opens it.
+	dbOnce sync.Once
+	db     *sql.DB
+	dbErr  error
 }
 
 // newTarget reads SCHEDULER_BASE_URL and checks the service answers /healthz.
@@ -65,15 +73,22 @@ type world struct {
 	body   []byte
 	header http.Header
 
-	prepared     *bookingRequest  // built by "prepares a booking", edited, then sent
+	prepared     *bookingRequest  // built by "prepares a booking" or "a ... request is prepared", edited, then sent
 	current      map[string]any   // "the appointment": the last appointment returned (201 or 200)
 	booked       map[string]any   // the last 201 booking response, for "equals the booking response"
 	appointments []map[string]any // every appointment confirmed in this scenario, in order
 	raced        []response       // outcomes of the last "at the same time" step, in request order
+
+	seen       map[string]map[string]any // the last record returned for each appointment id
+	byCustomer map[string]string         // the last appointment each customer booked, by customer name
+
+	// sentAt and answeredAt bracket the last transition request, for steps that compare the
+	// service's "now" with the suite's clock.
+	sentAt, answeredAt time.Time
 }
 
 func newWorld(t *target) *world {
-	return &world{target: t}
+	return &world{target: t, seen: map[string]map[string]any{}, byCustomer: map[string]string{}}
 }
 
 // send makes an HTTP request to the service and records the response.
@@ -127,6 +142,9 @@ func (w *world) record(resp response) {
 		return
 	}
 	w.current = appt
+	if id, ok := appt["id"].(string); ok {
+		w.seen[id] = appt
+	}
 	if resp.status == http.StatusCreated {
 		w.booked = appt
 		w.appointments = append(w.appointments, appt)

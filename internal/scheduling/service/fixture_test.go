@@ -119,9 +119,10 @@ type fixture struct {
 	techs        []scheduling.Technician
 
 	// islands answers DayLedger; call counts the calls for that local date, from 1.
-	islands     func(day scheduling.DayWindow, call int) []scheduling.Island
-	loads       scheduling.Loads
-	ledgerCalls map[string]int
+	islands      func(day scheduling.DayWindow, call int) []scheduling.Island
+	loads        scheduling.Loads
+	ledgerCalls  map[string]int
+	ledgerOwners []string // the owner of each DayLedger call, in order
 
 	// existing owns the booking key from the existingFrom-th lookup on (1-based); 0 never.
 	existing     scheduling.Appointment
@@ -246,9 +247,10 @@ func (f *fixture) service() Service {
 			return scheduling.Vehicle{}, notFound("vehicle", id)
 		})
 
-	f.store.EXPECT().DayLedger(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
-		func(_ context.Context, _ string, day scheduling.DayWindow) ([]scheduling.Island, scheduling.Loads, error) {
+	f.store.EXPECT().DayLedger(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
+		func(_ context.Context, _ string, day scheduling.DayWindow, owner string) ([]scheduling.Island, scheduling.Loads, error) {
 			f.ledgerCalls[day.LocalDate]++
+			f.ledgerOwners = append(f.ledgerOwners, owner)
 			return f.islands(day, f.ledgerCalls[day.LocalDate]), f.loads, nil
 		})
 	f.store.EXPECT().WorkingCells(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(

@@ -51,6 +51,11 @@ func ParseAppointmentStatus(s string) (AppointmentStatus, error) {
 
 func (s *AppointmentStatus) Scan(src any) error { return scanEnum(src, s, ParseAppointmentStatus) }
 
+// CanTransitionTo reports whether the state machine (design 4.3, notes 5.4) allows s → t.
+func (s AppointmentStatus) CanTransitionTo(t AppointmentStatus) bool {
+	panic("not implemented")
+}
+
 func (s AppointmentStatus) Value() (driver.Value, error) { return string(s), nil }
 
 // Channel is the calling channel, recorded on the appointment and its events.

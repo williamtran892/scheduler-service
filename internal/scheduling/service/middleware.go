@@ -43,6 +43,30 @@ func (s loggingService) Get(ctx context.Context, q GetQuery) (rec Record, err er
 	return s.next.Get(ctx, q)
 }
 
+func (s loggingService) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s loggingService) Cancel(ctx context.Context, cmd TransitionCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s loggingService) CheckIn(ctx context.Context, cmd CheckInCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s loggingService) Start(ctx context.Context, cmd StartCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s loggingService) Complete(ctx context.Context, cmd CompleteCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s loggingService) MarkNoShow(ctx context.Context, cmd TransitionCommand) (Record, error) {
+	panic("not implemented")
+}
+
 // InstrumentingMiddleware counts calls (scheduling.requests) and records their duration
 // (scheduling.request.duration) by method and problem code, which gives design 7's SLOT_TAKEN
 // rate at confirm. An instrument that cannot be created is a no-op, so metrics never stop a
@@ -71,6 +95,30 @@ func (s instrumentingService) Book(ctx context.Context, cmd BookCommand) (rec Re
 func (s instrumentingService) Get(ctx context.Context, q GetQuery) (rec Record, err error) {
 	defer func(begin time.Time) { s.observe(ctx, "Get", begin, err) }(time.Now())
 	return s.next.Get(ctx, q)
+}
+
+func (s instrumentingService) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s instrumentingService) Cancel(ctx context.Context, cmd TransitionCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s instrumentingService) CheckIn(ctx context.Context, cmd CheckInCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s instrumentingService) Start(ctx context.Context, cmd StartCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s instrumentingService) Complete(ctx context.Context, cmd CompleteCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s instrumentingService) MarkNoShow(ctx context.Context, cmd TransitionCommand) (Record, error) {
+	panic("not implemented")
 }
 
 func (s instrumentingService) observe(ctx context.Context, method string, begin time.Time, err error) {
@@ -111,6 +159,30 @@ func (s tracingService) Get(ctx context.Context, q GetQuery) (rec Record, err er
 	ctx, span := s.tracer.Start(ctx, "scheduling.Get")
 	defer func() { endSpan(span, err) }()
 	return s.next.Get(ctx, q)
+}
+
+func (s tracingService) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s tracingService) Cancel(ctx context.Context, cmd TransitionCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s tracingService) CheckIn(ctx context.Context, cmd CheckInCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s tracingService) Start(ctx context.Context, cmd StartCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s tracingService) Complete(ctx context.Context, cmd CompleteCommand) (Record, error) {
+	panic("not implemented")
+}
+
+func (s tracingService) MarkNoShow(ctx context.Context, cmd TransitionCommand) (Record, error) {
+	panic("not implemented")
 }
 
 func endSpan(span trace.Span, err error) {

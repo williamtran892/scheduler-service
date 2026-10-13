@@ -192,7 +192,7 @@ func (s *service) candidates(ctx context.Context, p plan) ([]scheduling.Candidat
 		return nil, fmt.Errorf("no active technician at %s holds %s on %s: %w", p.cfg.Code,
 			strings.Join(p.req.RequiredSkills, ", "), day.LocalDate, scheduling.ErrNoQualifiedTechnician)
 	}
-	islands, loads, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day)
+	islands, loads, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day, "")
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +350,7 @@ func (s *service) alternatives(ctx context.Context, p plan) ([]scheduling.Slot, 
 		if err != nil {
 			return nil, err
 		}
-		islands, _, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day)
+		islands, _, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day, "")
 		if err != nil {
 			return nil, err
 		}

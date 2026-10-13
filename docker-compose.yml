@@ -32,6 +32,7 @@ services:
     environment:
       MYSQL_DSN: "scheduler:scheduler@tcp(mysql:3306)/scheduler?parseTime=true&loc=UTC&time_zone=%27%2B00%3A00%27&charset=utf8mb4"
       OTEL_EXPORTER: none
+      NO_SHOW_SWEEP_INTERVAL: 1s   # the no-show sweeper runs every second for the acceptance suite
     ports: ["${APP_PORT:-8080}:8080"]
     depends_on:
       mysql:

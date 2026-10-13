@@ -40,6 +40,8 @@ type Appointment struct {
 	CustomerRequests CustomerRequests
 	Notes            string
 	Channel          Channel
+	ActualStartAt    *time.Time // set when work starts (IN_PROGRESS)
+	ActualEndAt      *time.Time // set when the job is completed
 	Version          int
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
@@ -60,6 +62,27 @@ type CellRange struct {
 type OwnedCells struct {
 	Bay        *CellRange
 	Technician *CellRange
+}
+
+// ResourceRun is a run of cells on one named bay or technician.
+type ResourceRun struct {
+	ResourceID string
+	Run        CellRun
+}
+
+// Keep says which of an appointment's cells a release keeps (research R3): the cells inside the
+// kept bay run and technician run, matched on resource id as well as time, and the cells that
+// start before Before. The zero Keep keeps nothing.
+type Keep struct {
+	Bay        *ResourceRun
+	Technician *ResourceRun
+	Before     time.Time
+}
+
+// Keeps reports whether the cell of kind and resourceID starting at slotStart stays with the
+// appointment.
+func (k Keep) Keeps(kind ResourceKind, resourceID string, slotStart time.Time) bool {
+	panic("not implemented")
 }
 
 // Event is one appointment_event row.

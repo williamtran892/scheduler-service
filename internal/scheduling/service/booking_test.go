@@ -576,3 +576,20 @@ func TestBook_UnexpectedStoreErrorsAreReturned(t *testing.T) {
 		t.Errorf("error = %v, want the store error, not a business outcome", err)
 	}
 }
+
+// A new booking owns no cells yet, so it reads the ledger with no owner (feature 002 added the
+// owner for reschedules).
+func TestBook_ReadsTheLedgerWithNoOwner(t *testing.T) {
+	f := newFixture(t)
+	f.expectTx(1)
+	run := cellRun(on("08:00"), 3)
+	gomock.InOrder(f.attempt("bay-1", "sam", run, run, nil)...)
+	f.loads = distinctLoads
+
+	if _, err := f.service().Book(ctx, booking()); err != nil {
+		t.Fatalf("Book: %v", err)
+	}
+	if len(f.ledgerOwners) == 0 || slices.ContainsFunc(f.ledgerOwners, func(o string) bool { return o != "" }) {
+		t.Errorf("ledger read with owners %q, want only \"\"", f.ledgerOwners)
+	}
+}

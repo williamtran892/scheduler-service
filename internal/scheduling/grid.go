@@ -28,6 +28,16 @@ func (g Grid) Align(t time.Time) (time.Time, error) {
 	return t, nil
 }
 
+// Floor returns the start of the cell that contains t.
+func (g Grid) Floor(t time.Time) time.Time {
+	panic("not implemented")
+}
+
+// Ceil returns t if it starts a cell, otherwise the start of the next cell.
+func (g Grid) Ceil(t time.Time) time.Time {
+	panic("not implemented")
+}
+
 // CellsFor returns the number of cells needed to cover d, rounded up.
 func (g Grid) CellsFor(d time.Duration) int {
 	return int((d + g.Slot() - 1) / g.Slot())

@@ -4,7 +4,8 @@
 #   2. build it into the scheduler:local image
 #   3. docker compose up the app container and a fresh MySQL, waiting until both are healthy
 #      (the app is healthy when GET /healthz answers 200, which needs MySQL)
-#   4. run test/acceptance against it over HTTP. GODOG_TAGS and GODOG_FORMAT pass through;
+#   4. run test/acceptance against it over HTTP (and SCHEDULER_TEST_DSN for @clock backdating).
+#      GODOG_TAGS and GODOG_FORMAT pass through;
 #      extra arguments go to go test (e.g. -v)
 #   5. always tear both containers down, discarding the database, pass or fail
 # Every run therefore starts from schema.sql + data.sql and leaves nothing behind.
@@ -13,6 +14,9 @@ cd "$(dirname "$0")/.."
 
 APP_PORT="${APP_PORT:-8080}"
 BASE_URL="http://127.0.0.1:${APP_PORT}"
+# The compose MySQL on the host port. Only @clock scenarios use it, and only to backdate an
+# appointment and its cells; a run without them never opens it.
+TEST_DSN="scheduler:scheduler@tcp(127.0.0.1:${MYSQL_PORT:-3306})/scheduler?parseTime=true&loc=UTC&time_zone=%27%2B00%3A00%27&charset=utf8mb4"
 
 show_app_logs() {
   echo "---- app container log (last 100 lines) ----" >&2
@@ -38,7 +42,7 @@ fi
 
 echo "==> 4/4 Running the acceptance suite against ${BASE_URL}"
 status=0
-SCHEDULER_BASE_URL="${BASE_URL}" go test ./test/acceptance/ -run TestFeatures -count=1 -timeout 20m "$@" || status=$?
+SCHEDULER_BASE_URL="${BASE_URL}" SCHEDULER_TEST_DSN="${TEST_DSN}" go test ./test/acceptance/ -run TestFeatures -count=1 -timeout 20m "$@" || status=$?
 if [[ ${status} -ne 0 ]]; then
   echo "Acceptance suite failed." >&2
   show_app_logs

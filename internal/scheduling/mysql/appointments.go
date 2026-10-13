@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"scheduler/internal/scheduling"
 )
@@ -35,6 +36,16 @@ func (tx *Tx) InsertAppointment(a scheduling.Appointment) error {
 		return fmt.Errorf("insert appointment %s: %w", a.ID, mapError(err))
 	}
 	return nil
+}
+
+// UpdateAppointment writes a transition's new state under the version check (research R1).
+func (tx *Tx) UpdateAppointment(a scheduling.Appointment, expectedVersion int) error {
+	panic("not implemented")
+}
+
+// DueNoShows returns the CONFIRMED appointments that start before before, oldest first.
+func (s *Store) DueNoShows(ctx context.Context, before time.Time) ([]scheduling.Appointment, error) {
+	panic("not implemented")
 }
 
 // Appointment loads one appointment; scheduling.ErrNotFound if there is none.

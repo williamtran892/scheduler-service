@@ -14,12 +14,65 @@ import (
 //go:generate go tool mockgen -destination=mock_scheduling_test.go -package=service scheduler/internal/scheduling Store,Tx,WorkshopReader,CustomerReader
 //go:generate go tool mockgen -destination=mock_service_test.go -package=service -self_package=scheduler/internal/scheduling/service scheduler/internal/scheduling/service Service
 
-// Service books and reads appointments.
+// Service books, reads and moves appointments through their lifecycle.
 type Service interface {
 	// Book confirms an appointment, or returns the one that already owns the booking key.
 	Book(ctx context.Context, cmd BookCommand) (Record, error)
 	// Get reads one appointment; scheduling.ErrNotFound if there is none.
 	Get(ctx context.Context, q GetQuery) (Record, error)
+
+	// Reschedule moves a CONFIRMED appointment in time, to other resources, or both (design 5.4).
+	Reschedule(ctx context.Context, cmd RescheduleCommand) (Record, error)
+	// Cancel releases every cell of a CONFIRMED or CHECKED_IN appointment; a CANCELLED one is
+	// returned unchanged.
+	Cancel(ctx context.Context, cmd TransitionCommand) (Record, error)
+	// CheckIn checks a CONFIRMED appointment in, or a NO_SHOW in as a late arrival.
+	CheckIn(ctx context.Context, cmd CheckInCommand) (Record, error)
+	// Start records the actual start of a CHECKED_IN appointment.
+	Start(ctx context.Context, cmd StartCommand) (Record, error)
+	// Complete records the actual end of an IN_PROGRESS appointment and releases its cells from
+	// the current grid cell on.
+	Complete(ctx context.Context, cmd CompleteCommand) (Record, error)
+	// MarkNoShow marks a CONFIRMED appointment NO_SHOW and releases every cell.
+	MarkNoShow(ctx context.Context, cmd TransitionCommand) (Record, error)
+}
+
+// TransitionCommand is what every lifecycle request carries (contract TransitionRequest), plus
+// who is acting: the calling channel, or none and a job name when the sweeper acts.
+type TransitionCommand struct {
+	AppointmentID   string
+	ExpectedVersion int
+	Reason          string
+	Channel         scheduling.Channel // empty when a background job acts
+	Actor           string             // empty means "anonymous"
+}
+
+// RescheduleCommand is a decoded rescheduleAppointment request. A nil StartAt keeps the current
+// start (a pure reassign); an empty TechnicianID or ServiceBayID leaves the choice to the service.
+type RescheduleCommand struct {
+	TransitionCommand
+	StartAt      *time.Time
+	TechnicianID string
+	ServiceBayID string
+}
+
+// CheckInCommand is a decoded checkInAppointment request.
+type CheckInCommand struct {
+	TransitionCommand
+	Mileage            *int
+	AdditionalConcerns string
+}
+
+// StartCommand is a decoded startAppointment request; a nil StartedAt means now.
+type StartCommand struct {
+	TransitionCommand
+	StartedAt *time.Time
+}
+
+// CompleteCommand is a decoded completeAppointment request; a nil CompletedAt means now.
+type CompleteCommand struct {
+	TransitionCommand
+	CompletedAt *time.Time
 }
 
 // BookCommand is a decoded bookAppointment request plus the calling channel.

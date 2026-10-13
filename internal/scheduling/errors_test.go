@@ -111,3 +111,34 @@ func extensionJSON(t *testing.T, ext map[string]any, key string) string {
 	}
 	return string(b)
 }
+
+func TestErrors_LifecycleErrorsCarryTheirContractCode(t *testing.T) {
+	want := map[*Error]string{
+		ErrStaleVersion:      "VERSION_CONFLICT",
+		ErrInvalidTransition: "INVALID_TRANSITION",
+		ErrForbidden:         "FORBIDDEN",
+	}
+	for err, code := range want {
+		if err.ProblemCode() != code {
+			t.Errorf("%q has code %q, want %s", err.Error(), err.ProblemCode(), code)
+		}
+	}
+}
+
+func TestVersionConflictError_IsAStaleVersionWithBothVersionsInItsDetail(t *testing.T) {
+	err := error(&VersionConflictError{Current: 3, Sent: 2})
+
+	if !errors.Is(err, ErrStaleVersion) {
+		t.Error("VersionConflictError is not ErrStaleVersion")
+	}
+	var coded interface{ ProblemCode() string }
+	if !errors.As(err, &coded) || coded.ProblemCode() != "VERSION_CONFLICT" {
+		t.Errorf("code = %v, want VERSION_CONFLICT", coded)
+	}
+	if got, want := err.Error(), "Appointment is at version 3; you sent 2."; got != want {
+		t.Errorf("Error() = %q, want %q (contract VERSION_CONFLICT detail)", got, want)
+	}
+	if !errors.Is(fmt.Errorf("start appointment a1: %w", err), ErrStaleVersion) {
+		t.Error("a wrapped VersionConflictError is not ErrStaleVersion")
+	}
+}

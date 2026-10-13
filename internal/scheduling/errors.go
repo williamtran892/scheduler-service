@@ -38,7 +38,22 @@ var (
 	ErrAvailabilityChanged   = &Error{Code: "AVAILABILITY_CHANGED", Message: "availability changed"}
 	ErrDuplicateBooking      = &Error{Code: "DUPLICATE_BOOKING", Message: "booking key already has an appointment"}
 	ErrDeadlockVictim        = &Error{Code: "SLOT_TAKEN", Message: "deadlock victim"}
+
+	// Lifecycle errors (feature 002). Not implemented yet: they carry no problem code.
+	ErrStaleVersion      = &Error{Message: "not implemented"}
+	ErrInvalidTransition = &Error{Message: "not implemented"}
+	ErrForbidden         = &Error{Message: "not implemented"}
 )
+
+// VersionConflictError is the final VERSION_CONFLICT answer when the caller's expectedVersion is
+// not the stored one; it is ErrStaleVersion.
+type VersionConflictError struct {
+	Current, Sent int
+}
+
+func (e *VersionConflictError) Error() string        { panic("not implemented") }
+func (e *VersionConflictError) Is(target error) bool { panic("not implemented") }
+func (e *VersionConflictError) ProblemCode() string  { panic("not implemented") }
 
 // Slot is one alternative start offered with SLOT_TAKEN or AVAILABILITY_CHANGED.
 type Slot struct {

@@ -20,6 +20,11 @@ func (tx *Tx) ClaimPair(dealershipID, bayID string, bayRun scheduling.CellRun,
 	return tx.claimRun(dealershipID, scheduling.ResourceTechnician, techID, techRun, appointmentID, scheduling.ErrTechnicianNotWorking)
 }
 
+// ReleaseCells frees every cell the appointment owns that keep does not keep (research R3).
+func (tx *Tx) ReleaseCells(appointmentID string, keep scheduling.Keep) (int, error) {
+	panic("not implemented")
+}
+
 // cell is one time_slot row as the claim reads it.
 type cell struct {
 	start         time.Time
@@ -87,7 +92,9 @@ func scanCells(rows *sql.Rows) ([]cell, error) {
 // The island query needs the length of a cell to tell consecutive cells from a gap. The
 // signature carries no grid, so it joins dealership.slot_minutes: the one column this package
 // reads from another domain's table, through time_slot's own foreign key.
-func (s *Store) DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow) ([]scheduling.Island, scheduling.Loads, error) {
+//
+// owner is not honoured yet (feature 002, research R4): its cells still count as booked.
+func (s *Store) DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, scheduling.Loads, error) {
 	islands, err := s.islands(ctx, dealershipID, day)
 	if err != nil {
 		return nil, nil, fmt.Errorf("free runs of dealership %s on %s: %w", dealershipID, day.LocalDate, err)

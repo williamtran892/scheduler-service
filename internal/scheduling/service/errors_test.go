@@ -18,6 +18,8 @@ func TestEverySchedulingErrorHasAContractStatus(t *testing.T) {
 		scheduling.ErrCellsMissing, scheduling.ErrBayNotOpen, scheduling.ErrTechnicianNotWorking,
 		scheduling.ErrAvailabilityChanged, scheduling.ErrDuplicateBooking, scheduling.ErrDeadlockVictim,
 		&scheduling.SlotTakenError{}, &scheduling.AvailabilityChangedError{}, &scheduling.DuplicateBookingError{},
+		scheduling.ErrStaleVersion, scheduling.ErrInvalidTransition, scheduling.ErrForbidden,
+		&scheduling.VersionConflictError{Current: 2, Sent: 1},
 	}
 	for _, err := range all {
 		var coded platform.Coded

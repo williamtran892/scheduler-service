@@ -85,3 +85,53 @@ func TestCellRun_LastEndWithin(t *testing.T) {
 		})
 	}
 }
+
+func TestGrid_FloorIsTheStartOfTheCellContainingT(t *testing.T) {
+	g := Grid{SlotMinutes: 15}
+	at := func(hhmm string, sec, nsec int) time.Time {
+		c, _ := time.Parse("15:04", hhmm)
+		return time.Date(2026, 10, 20, c.Hour(), c.Minute(), sec, nsec, time.UTC)
+	}
+	tests := []struct {
+		name string
+		t    time.Time
+		want time.Time
+	}{
+		{"inside a cell", at("09:40", 0, 0), at("09:30", 0, 0)},
+		{"a cell start is its own floor", at("09:30", 0, 0), at("09:30", 0, 0)},
+		{"just before the next cell", at("09:44", 59, 999_999_999), at("09:30", 0, 0)},
+		{"in another offset, the same instant", at("09:40", 0, 0).In(time.FixedZone("BST", 3600)), at("09:30", 0, 0)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := g.Floor(tt.t); !got.Equal(tt.want) {
+				t.Errorf("Floor(%s) = %s, want %s", tt.t, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGrid_CeilIsTOnTheGridElseTheNextCellStart(t *testing.T) {
+	g := Grid{SlotMinutes: 15}
+	at := func(hhmm string, sec, nsec int) time.Time {
+		c, _ := time.Parse("15:04", hhmm)
+		return time.Date(2026, 10, 20, c.Hour(), c.Minute(), sec, nsec, time.UTC)
+	}
+	tests := []struct {
+		name string
+		t    time.Time
+		want time.Time
+	}{
+		{"inside a cell rounds up (design 11.3: complete at 09:40)", at("09:40", 0, 0), at("09:45", 0, 0)},
+		{"a cell start stays", at("09:45", 0, 0), at("09:45", 0, 0)},
+		{"half a second past a cell start rounds up", at("09:45", 0, 500_000_000), at("10:00", 0, 0)},
+		{"across the hour", at("09:59", 0, 0), at("10:00", 0, 0)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := g.Ceil(tt.t); !got.Equal(tt.want) {
+				t.Errorf("Ceil(%s) = %s, want %s", tt.t, got, tt.want)
+			}
+		})
+	}
+}

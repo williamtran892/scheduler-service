@@ -55,6 +55,51 @@ func (mr *MockServiceMockRecorder) Book(ctx, cmd any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Book", reflect.TypeOf((*MockService)(nil).Book), ctx, cmd)
 }
 
+// Cancel mocks base method.
+func (m *MockService) Cancel(ctx context.Context, cmd TransitionCommand) (Record, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Cancel", ctx, cmd)
+	ret0, _ := ret[0].(Record)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Cancel indicates an expected call of Cancel.
+func (mr *MockServiceMockRecorder) Cancel(ctx, cmd any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cancel", reflect.TypeOf((*MockService)(nil).Cancel), ctx, cmd)
+}
+
+// CheckIn mocks base method.
+func (m *MockService) CheckIn(ctx context.Context, cmd CheckInCommand) (Record, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CheckIn", ctx, cmd)
+	ret0, _ := ret[0].(Record)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CheckIn indicates an expected call of CheckIn.
+func (mr *MockServiceMockRecorder) CheckIn(ctx, cmd any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckIn", reflect.TypeOf((*MockService)(nil).CheckIn), ctx, cmd)
+}
+
+// Complete mocks base method.
+func (m *MockService) Complete(ctx context.Context, cmd CompleteCommand) (Record, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Complete", ctx, cmd)
+	ret0, _ := ret[0].(Record)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Complete indicates an expected call of Complete.
+func (mr *MockServiceMockRecorder) Complete(ctx, cmd any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Complete", reflect.TypeOf((*MockService)(nil).Complete), ctx, cmd)
+}
+
 // Get mocks base method.
 func (m *MockService) Get(ctx context.Context, q GetQuery) (Record, error) {
 	m.ctrl.T.Helper()
@@ -68,4 +113,49 @@ func (m *MockService) Get(ctx context.Context, q GetQuery) (Record, error) {
 func (mr *MockServiceMockRecorder) Get(ctx, q any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockService)(nil).Get), ctx, q)
+}
+
+// MarkNoShow mocks base method.
+func (m *MockService) MarkNoShow(ctx context.Context, cmd TransitionCommand) (Record, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkNoShow", ctx, cmd)
+	ret0, _ := ret[0].(Record)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// MarkNoShow indicates an expected call of MarkNoShow.
+func (mr *MockServiceMockRecorder) MarkNoShow(ctx, cmd any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkNoShow", reflect.TypeOf((*MockService)(nil).MarkNoShow), ctx, cmd)
+}
+
+// Reschedule mocks base method.
+func (m *MockService) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Reschedule", ctx, cmd)
+	ret0, _ := ret[0].(Record)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Reschedule indicates an expected call of Reschedule.
+func (mr *MockServiceMockRecorder) Reschedule(ctx, cmd any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Reschedule", reflect.TypeOf((*MockService)(nil).Reschedule), ctx, cmd)
+}
+
+// Start mocks base method.
+func (m *MockService) Start(ctx context.Context, cmd StartCommand) (Record, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Start", ctx, cmd)
+	ret0, _ := ret[0].(Record)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Start indicates an expected call of Start.
+func (mr *MockServiceMockRecorder) Start(ctx, cmd any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Start", reflect.TypeOf((*MockService)(nil).Start), ctx, cmd)
 }

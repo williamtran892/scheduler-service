@@ -1,7 +1,9 @@
 // Package acceptance runs the Gherkin features in /features against the running service at
-// SCHEDULER_BASE_URL. It is a black-box client: it reaches the service only through its HTTP API
-// and has no access to the database. scripts/integration.sh starts the service and a fresh
-// MySQL in containers, runs this package, and tears both down:
+// SCHEDULER_BASE_URL. It is a black-box client: it reaches the service only through its HTTP API.
+// The one exception is the @clock backdating step (steps_clock.go), which moves an appointment
+// and its cells into the past through SCHEDULER_TEST_DSN and reads nothing back.
+// scripts/integration.sh starts the service and a fresh MySQL in containers, runs this package,
+// and tears both down:
 //
 //	make test-integration
 //	make test-integration TAGS=@bootstrap      (sets GODOG_TAGS)
@@ -46,7 +48,11 @@ func TestFeatures(t *testing.T) {
 		ScenarioInitializer: func(sc *godog.ScenarioContext) { initScenario(sc, target) },
 		Options:             suiteOptions(t),
 	}
-	if suite.Run() != 0 {
+	status := suite.Run()
+	if target.db != nil {
+		_ = target.db.Close()
+	}
+	if status != 0 {
 		t.Fatal("acceptance suite failed")
 	}
 }
@@ -60,4 +66,6 @@ func initScenario(sc *godog.ScenarioContext, t *target) {
 	registerBookingSteps(sc, w)
 	registerRecordSteps(sc, w)
 	registerRaceSteps(sc, w)
+	registerLifecycleSteps(sc, w)
+	registerClockSteps(sc, w)
 }

@@ -13,11 +13,13 @@ import (
 // defaultChannel is the channel a booking or fetch states unless a step says otherwise.
 const defaultChannel = "ADVISOR_CONSOLE"
 
-// bookingRequest is a POST /appointments request being built: the JSON body (the contract's
-// BookAppointmentRequest) and the X-Channel header, which is empty when the request has none.
+// bookingRequest is a POST request being built: the JSON body and the X-Channel header, which is
+// empty when the request has none. path is empty for a booking (POST /appointments, the
+// contract's BookAppointmentRequest) and names the route for a prepared transition request.
 type bookingRequest struct {
 	body    map[string]any
 	channel string
+	path    string
 }
 
 // newBooking builds the default request: dealership MAN01, kind DROP_OFF, channel
@@ -105,7 +107,11 @@ func (w *world) post(ctx context.Context, b *bookingRequest) (response, error) {
 	if err != nil {
 		return response{}, err
 	}
-	return w.do(ctx, http.MethodPost, "/appointments", body, b.headers())
+	path := b.path
+	if path == "" {
+		path = "/appointments"
+	}
+	return w.do(ctx, http.MethodPost, path, body, b.headers())
 }
 
 // book sends the booking and records the response.
@@ -129,22 +135,24 @@ func registerBookingSteps(sc *godog.ScenarioContext, w *world) {
 		if err != nil {
 			return err
 		}
-		return w.book(ctx, b)
+		return w.bookAs(ctx, who, b)
 	})
 	sc.Step(`^`+booking+` with:$`, func(ctx context.Context, who, service, reg, d, hhmm, dealer, channel string, table *godog.Table) error {
 		b, err := buildBooking(who, service, reg, d, hhmm, dealer, channel, table)
 		if err != nil {
 			return err
 		}
-		return w.book(ctx, b)
+		return w.bookAs(ctx, who, b)
 	})
-	sc.Step(`^"([^"]*)" has booked "([^"]*)" for "([^"]*)" `+dayPattern+` at `+timePattern+`$`,
-		func(ctx context.Context, who, service, reg, d, hhmm string) error {
-			return w.hasBooked(ctx, who, service, reg, d, hhmm, nil)
+	const hasBooked = `"([^"]*)" has booked "([^"]*)" for "([^"]*)" ` + dayPattern + ` at ` + timePattern +
+		`(?: at dealership "([^"]*)")?`
+	sc.Step(`^`+hasBooked+`$`,
+		func(ctx context.Context, who, service, reg, d, hhmm, dealer string) error {
+			return w.hasBooked(ctx, who, service, reg, d, hhmm, dealer, nil)
 		})
-	sc.Step(`^"([^"]*)" has booked "([^"]*)" for "([^"]*)" `+dayPattern+` at `+timePattern+` with:$`,
-		func(ctx context.Context, who, service, reg, d, hhmm string, table *godog.Table) error {
-			return w.hasBooked(ctx, who, service, reg, d, hhmm, table)
+	sc.Step(`^`+hasBooked+` with:$`,
+		func(ctx context.Context, who, service, reg, d, hhmm, dealer string, table *godog.Table) error {
+			return w.hasBooked(ctx, who, service, reg, d, hhmm, dealer, table)
 		})
 
 	sc.Step(`^"([^"]*)" prepares a booking of "([^"]*)" for "([^"]*)" `+dayPattern+` at `+timePattern+`$`,
@@ -157,6 +165,9 @@ func registerBookingSteps(sc *godog.ScenarioContext, w *world) {
 		return w.editPrepared(func(b *bookingRequest) { delete(b.body, field) })
 	})
 	sc.Step(`^the request has "([^"]*)" set to "([^"]*)"$`, func(field, value string) error {
+		return w.editPrepared(func(b *bookingRequest) { b.body[field] = value })
+	})
+	sc.Step(`^the request has "([^"]*)" set to (-?\d+)$`, func(field string, value int) error {
 		return w.editPrepared(func(b *bookingRequest) { b.body[field] = value })
 	})
 	sc.Step(`^the request has no channel$`, func() error {
@@ -180,6 +191,13 @@ func registerBookingSteps(sc *godog.ScenarioContext, w *world) {
 	})
 	sc.Step(`^appointment "([^"]*)" is fetched$`, func(ctx context.Context, id string) error {
 		return w.fetch(ctx, id, defaultChannel, "")
+	})
+	sc.Step(`^the appointment of "([^"]*)" is fetched through "([^"]*)"$`, func(ctx context.Context, who, channel string) error {
+		id, err := w.appointmentOf(who)
+		if err != nil {
+			return err
+		}
+		return w.fetch(ctx, id, channel, "")
 	})
 }
 
@@ -212,18 +230,41 @@ func (w *world) workshopFixture(code string) error {
 }
 
 // hasBooked books and requires a 201, so later steps can rely on the appointment.
-func (w *world) hasBooked(ctx context.Context, who, service, reg, d, hhmm string, table *godog.Table) error {
-	b, err := buildBooking(who, service, reg, d, hhmm, "", "", table)
+func (w *world) hasBooked(ctx context.Context, who, service, reg, d, hhmm, dealer string, table *godog.Table) error {
+	b, err := buildBooking(who, service, reg, d, hhmm, dealer, "", table)
 	if err != nil {
 		return err
 	}
-	if err := w.book(ctx, b); err != nil {
+	if err := w.bookAs(ctx, who, b); err != nil {
 		return err
 	}
 	if w.status != http.StatusCreated {
 		return fmt.Errorf("%s booking %s at %s %s: status %d, want 201; body: %s", who, service, d, hhmm, w.status, w.body)
 	}
 	return nil
+}
+
+// bookAs books for a named customer and remembers a confirmed booking as that customer's
+// appointment, for "the appointment of "<customer>"".
+func (w *world) bookAs(ctx context.Context, who string, b *bookingRequest) error {
+	if err := w.book(ctx, b); err != nil {
+		return err
+	}
+	if w.status == http.StatusCreated {
+		if id, err := w.currentID(); err == nil {
+			w.byCustomer[who] = id
+		}
+	}
+	return nil
+}
+
+// appointmentOf is the id of the last appointment who booked in this scenario.
+func (w *world) appointmentOf(who string) (string, error) {
+	id, ok := w.byCustomer[who]
+	if !ok {
+		return "", fmt.Errorf("%s has booked nothing in this scenario", who)
+	}
+	return id, nil
 }
 
 func (w *world) editPrepared(edit func(*bookingRequest)) error {
