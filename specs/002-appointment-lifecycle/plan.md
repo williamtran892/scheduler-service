@@ -225,6 +225,10 @@ approved and seen failing before the code in that step.
 - **Late arrival prefers the previous pair and starts at the current cell, not the next**: the
   contract's wording; the next cell would give the advisor a few minutes but contradicts it.
 
+## Review record
+
+**Behavior gate: approved 2026-10-13** by the reviewing session on the user's behalf. The three feature files and the spec's acceptance block were read in full against the design extract, the implementation notes, the contract and the feature 001 code. Accepted as written: the 403 rule for customer channels on staff actions (the contract marks them staff only), the backdating step as the only database write in the suite, the LDS01 bay, technician and round-the-clock cells (the only deterministic way to claim cells at the current time), late arrival starting at the current grid cell, and a reschedule onto a cancelled appointment's key answering DUPLICATE_BOOKING (consistent with booking). One instruction for the Red phase: the ledger guard should exclude the `test/` tree explicitly rather than rely on the backdate step living in a `_test.go` file.
+
 ## Complexity Tracking
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
