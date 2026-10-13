@@ -43,28 +43,41 @@ func (s loggingService) Get(ctx context.Context, q GetQuery) (rec Record, err er
 	return s.next.Get(ctx, q)
 }
 
-func (s loggingService) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record, error) {
-	panic("not implemented")
+func (s loggingService) Reschedule(ctx context.Context, cmd RescheduleCommand) (rec Record, err error) {
+	defer func(begin time.Time) { s.logTransition("Reschedule", cmd.TransitionCommand, begin, err) }(time.Now())
+	return s.next.Reschedule(ctx, cmd)
 }
 
-func (s loggingService) Cancel(ctx context.Context, cmd TransitionCommand) (Record, error) {
-	panic("not implemented")
+func (s loggingService) Cancel(ctx context.Context, cmd TransitionCommand) (rec Record, err error) {
+	defer func(begin time.Time) { s.logTransition("Cancel", cmd, begin, err) }(time.Now())
+	return s.next.Cancel(ctx, cmd)
 }
 
-func (s loggingService) CheckIn(ctx context.Context, cmd CheckInCommand) (Record, error) {
-	panic("not implemented")
+func (s loggingService) CheckIn(ctx context.Context, cmd CheckInCommand) (rec Record, err error) {
+	defer func(begin time.Time) { s.logTransition("CheckIn", cmd.TransitionCommand, begin, err) }(time.Now())
+	return s.next.CheckIn(ctx, cmd)
 }
 
-func (s loggingService) Start(ctx context.Context, cmd StartCommand) (Record, error) {
-	panic("not implemented")
+func (s loggingService) Start(ctx context.Context, cmd StartCommand) (rec Record, err error) {
+	defer func(begin time.Time) { s.logTransition("Start", cmd.TransitionCommand, begin, err) }(time.Now())
+	return s.next.Start(ctx, cmd)
 }
 
-func (s loggingService) Complete(ctx context.Context, cmd CompleteCommand) (Record, error) {
-	panic("not implemented")
+func (s loggingService) Complete(ctx context.Context, cmd CompleteCommand) (rec Record, err error) {
+	defer func(begin time.Time) { s.logTransition("Complete", cmd.TransitionCommand, begin, err) }(time.Now())
+	return s.next.Complete(ctx, cmd)
 }
 
-func (s loggingService) MarkNoShow(ctx context.Context, cmd TransitionCommand) (Record, error) {
-	panic("not implemented")
+func (s loggingService) MarkNoShow(ctx context.Context, cmd TransitionCommand) (rec Record, err error) {
+	defer func(begin time.Time) { s.logTransition("MarkNoShow", cmd, begin, err) }(time.Now())
+	return s.next.MarkNoShow(ctx, cmd)
+}
+
+// logTransition logs one lifecycle call: the method, the appointment, the version the caller
+// sent, who acted (the channel, or the actor of a background job), the duration and the error.
+func (s loggingService) logTransition(method string, cmd TransitionCommand, begin time.Time, err error) {
+	_ = s.logger.Log("method", method, "appointment", cmd.AppointmentID, "expected_version", cmd.ExpectedVersion,
+		"channel", cmd.Channel, "actor", cmd.Actor, "took", time.Since(begin), "err", err)
 }
 
 // InstrumentingMiddleware counts calls (scheduling.requests) and records their duration
@@ -97,28 +110,34 @@ func (s instrumentingService) Get(ctx context.Context, q GetQuery) (rec Record, 
 	return s.next.Get(ctx, q)
 }
 
-func (s instrumentingService) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record, error) {
-	panic("not implemented")
+func (s instrumentingService) Reschedule(ctx context.Context, cmd RescheduleCommand) (rec Record, err error) {
+	defer func(begin time.Time) { s.observe(ctx, "Reschedule", begin, err) }(time.Now())
+	return s.next.Reschedule(ctx, cmd)
 }
 
-func (s instrumentingService) Cancel(ctx context.Context, cmd TransitionCommand) (Record, error) {
-	panic("not implemented")
+func (s instrumentingService) Cancel(ctx context.Context, cmd TransitionCommand) (rec Record, err error) {
+	defer func(begin time.Time) { s.observe(ctx, "Cancel", begin, err) }(time.Now())
+	return s.next.Cancel(ctx, cmd)
 }
 
-func (s instrumentingService) CheckIn(ctx context.Context, cmd CheckInCommand) (Record, error) {
-	panic("not implemented")
+func (s instrumentingService) CheckIn(ctx context.Context, cmd CheckInCommand) (rec Record, err error) {
+	defer func(begin time.Time) { s.observe(ctx, "CheckIn", begin, err) }(time.Now())
+	return s.next.CheckIn(ctx, cmd)
 }
 
-func (s instrumentingService) Start(ctx context.Context, cmd StartCommand) (Record, error) {
-	panic("not implemented")
+func (s instrumentingService) Start(ctx context.Context, cmd StartCommand) (rec Record, err error) {
+	defer func(begin time.Time) { s.observe(ctx, "Start", begin, err) }(time.Now())
+	return s.next.Start(ctx, cmd)
 }
 
-func (s instrumentingService) Complete(ctx context.Context, cmd CompleteCommand) (Record, error) {
-	panic("not implemented")
+func (s instrumentingService) Complete(ctx context.Context, cmd CompleteCommand) (rec Record, err error) {
+	defer func(begin time.Time) { s.observe(ctx, "Complete", begin, err) }(time.Now())
+	return s.next.Complete(ctx, cmd)
 }
 
-func (s instrumentingService) MarkNoShow(ctx context.Context, cmd TransitionCommand) (Record, error) {
-	panic("not implemented")
+func (s instrumentingService) MarkNoShow(ctx context.Context, cmd TransitionCommand) (rec Record, err error) {
+	defer func(begin time.Time) { s.observe(ctx, "MarkNoShow", begin, err) }(time.Now())
+	return s.next.MarkNoShow(ctx, cmd)
 }
 
 func (s instrumentingService) observe(ctx context.Context, method string, begin time.Time, err error) {
@@ -161,28 +180,40 @@ func (s tracingService) Get(ctx context.Context, q GetQuery) (rec Record, err er
 	return s.next.Get(ctx, q)
 }
 
-func (s tracingService) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record, error) {
-	panic("not implemented")
+func (s tracingService) Reschedule(ctx context.Context, cmd RescheduleCommand) (rec Record, err error) {
+	ctx, span := s.tracer.Start(ctx, "scheduling.Reschedule")
+	defer func() { endSpan(span, err) }()
+	return s.next.Reschedule(ctx, cmd)
 }
 
-func (s tracingService) Cancel(ctx context.Context, cmd TransitionCommand) (Record, error) {
-	panic("not implemented")
+func (s tracingService) Cancel(ctx context.Context, cmd TransitionCommand) (rec Record, err error) {
+	ctx, span := s.tracer.Start(ctx, "scheduling.Cancel")
+	defer func() { endSpan(span, err) }()
+	return s.next.Cancel(ctx, cmd)
 }
 
-func (s tracingService) CheckIn(ctx context.Context, cmd CheckInCommand) (Record, error) {
-	panic("not implemented")
+func (s tracingService) CheckIn(ctx context.Context, cmd CheckInCommand) (rec Record, err error) {
+	ctx, span := s.tracer.Start(ctx, "scheduling.CheckIn")
+	defer func() { endSpan(span, err) }()
+	return s.next.CheckIn(ctx, cmd)
 }
 
-func (s tracingService) Start(ctx context.Context, cmd StartCommand) (Record, error) {
-	panic("not implemented")
+func (s tracingService) Start(ctx context.Context, cmd StartCommand) (rec Record, err error) {
+	ctx, span := s.tracer.Start(ctx, "scheduling.Start")
+	defer func() { endSpan(span, err) }()
+	return s.next.Start(ctx, cmd)
 }
 
-func (s tracingService) Complete(ctx context.Context, cmd CompleteCommand) (Record, error) {
-	panic("not implemented")
+func (s tracingService) Complete(ctx context.Context, cmd CompleteCommand) (rec Record, err error) {
+	ctx, span := s.tracer.Start(ctx, "scheduling.Complete")
+	defer func() { endSpan(span, err) }()
+	return s.next.Complete(ctx, cmd)
 }
 
-func (s tracingService) MarkNoShow(ctx context.Context, cmd TransitionCommand) (Record, error) {
-	panic("not implemented")
+func (s tracingService) MarkNoShow(ctx context.Context, cmd TransitionCommand) (rec Record, err error) {
+	ctx, span := s.tracer.Start(ctx, "scheduling.MarkNoShow")
+	defer func() { endSpan(span, err) }()
+	return s.next.MarkNoShow(ctx, cmd)
 }
 
 func endSpan(span trace.Span, err error) {

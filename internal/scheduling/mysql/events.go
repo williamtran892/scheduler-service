@@ -10,7 +10,7 @@ import (
 )
 
 // AppendEvent appends an appointment_event row inside the booking transaction. payload is
-// stored as JSON.
+// stored as JSON. An empty channel, the no-show sweeper's, is stored as NULL.
 func (tx *Tx) AppendEvent(appointmentID, eventType, actor string, channel scheduling.Channel, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -18,7 +18,8 @@ func (tx *Tx) AppendEvent(appointmentID, eventType, actor string, channel schedu
 	}
 	_, err = tx.tx.ExecContext(tx.ctx, `
 		INSERT INTO appointment_event (appointment_id, event_type, payload, actor, channel)
-		VALUES (?, ?, ?, ?, ?)`, appointmentID, eventType, string(body), actor, channel)
+		VALUES (?, ?, ?, ?, ?)`, appointmentID, eventType, string(body), actor,
+		sql.NullString{String: string(channel), Valid: channel != ""})
 	if err != nil {
 		return fmt.Errorf("append %s event of appointment %s: %w", eventType, appointmentID, mapError(err))
 	}

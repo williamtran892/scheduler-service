@@ -2,10 +2,151 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"scheduler/internal/scheduling"
 )
 
 // Reschedule moves a CONFIRMED appointment, reusing booking's plan with the appointment as the
-// owner whose cells count as free (design 5.4; research R4). Not implemented yet.
+// owner whose cells count as free (design 5.4; research R4). The new start is startAt, or the
+// current start for a pure reassign; a named bay or technician restricts the candidates. The
+// appointment's own pair is tried first, with the named resources put in its place.
 func (s *service) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record, error) {
-	panic("not implemented")
+	if cmd.Channel.IsCustomer() && (cmd.TechnicianID != "" || cmd.ServiceBayID != "") {
+		return Record{}, fmt.Errorf("naming the bay or the technician is a staff action: %w", scheduling.ErrForbidden)
+	}
+	a, err := s.begin(ctx, cmd.TransitionCommand, scheduling.StatusConfirmed)
+	if err != nil {
+		return Record{}, err
+	}
+
+	p, err := s.movePlan(ctx, a, cmd.Channel)
+	if err != nil {
+		return Record{}, err
+	}
+	p.requested = a.StartAt
+	if cmd.StartAt != nil {
+		p.requested = *cmd.StartAt
+	}
+	p.pinBay, p.pinTech = cmd.ServiceBayID, cmd.TechnicianID
+	if p.pinBay != "" {
+		p.prefer.BayID = p.pinBay
+	}
+	if p.pinTech != "" {
+		p.prefer.TechID = p.pinTech
+	}
+
+	if p, err = s.validate(p); err != nil {
+		return Record{}, err
+	}
+	if err := s.checkWorkingTime(ctx, p); err != nil {
+		return Record{}, err
+	}
+	pairs, err := s.candidates(ctx, p)
+	if err != nil {
+		return Record{}, err
+	}
+
+	rec, err := s.claim(ctx, p, pairs, func(pair scheduling.Candidate) (Record, error) {
+		next := s.next(a, scheduling.StatusConfirmed)
+		next.StartAt, next.EndAt = p.start, p.start.Add(p.req.Duration)
+		next.ServiceBayID, next.TechnicianID = pair.BayID, pair.TechID
+		return s.apply(ctx, cmd.TransitionCommand, a, next, change{
+			event:   eventRescheduled,
+			outbox:  outboxRescheduled,
+			payload: eventPayload{Reason: cmd.Reason, Previous: placementOf(a), New: placementOf(next)},
+			claim:   &newRuns{bayID: pair.BayID, techID: pair.TechID, bay: p.bay, tech: p.tech},
+			release: &scheduling.Keep{
+				Bay:        &scheduling.ResourceRun{ResourceID: pair.BayID, Run: p.bay},
+				Technician: &scheduling.ResourceRun{ResourceID: pair.TechID, Run: p.tech},
+			},
+			cells: scheduling.OwnedCells{Bay: cellRange(p.bay), Technician: cellRange(p.tech)},
+		})
+	})
+	switch {
+	case errors.Is(err, errNoPair):
+		return Record{}, s.slotTakenError(ctx, p)
+	case errors.Is(err, errCellsGone):
+		return Record{}, s.availabilityChangedError(ctx, p)
+	case errors.Is(err, scheduling.ErrDuplicateBooking):
+		return Record{}, s.keyOwner(ctx, a, p.start)
+	}
+	return rec, err
+}
+
+// lateArrival checks a NO_SHOW appointment in on the cells that are free now (spec FR-031): the
+// new start is the grid cell that contains now, the runs follow from the service type as in
+// booking, and the previous pair is tried first, then the least-loaded. The booking horizon and
+// "after now" do not apply. Every way of finding no pair, whether the cells are taken or missing
+// or nobody is qualified, is SLOT_TAKEN with alternatives (spec FR-032), and the appointment
+// stays NO_SHOW.
+func (s *service) lateArrival(ctx context.Context, cmd TransitionCommand, a scheduling.Appointment, payload eventPayload) (Record, error) {
+	p, err := s.movePlan(ctx, a, cmd.Channel)
+	if err != nil {
+		return Record{}, err
+	}
+	p.start = p.cfg.Grid.Floor(s.clock.Now())
+	p.bay, p.tech = p.req.Runs(p.start, p.cfg.Grid)
+
+	pairs, err := s.candidates(ctx, p)
+	if errors.Is(err, scheduling.ErrNoQualifiedTechnician) {
+		return Record{}, s.slotTakenError(ctx, p)
+	}
+	if err != nil {
+		return Record{}, err
+	}
+
+	rec, err := s.claim(ctx, p, pairs, func(pair scheduling.Candidate) (Record, error) {
+		next := s.next(a, scheduling.StatusCheckedIn)
+		next.StartAt, next.EndAt = p.start, p.start.Add(p.req.Duration)
+		next.ServiceBayID, next.TechnicianID = pair.BayID, pair.TechID
+		payload := payload
+		payload.LateArrival, payload.Previous, payload.New = true, placementOf(a), placementOf(next)
+		return s.apply(ctx, cmd, a, next, change{
+			event:   eventCheckedIn,
+			outbox:  outboxCheckedIn,
+			payload: payload,
+			claim:   &newRuns{bayID: pair.BayID, techID: pair.TechID, bay: p.bay, tech: p.tech},
+			cells:   scheduling.OwnedCells{Bay: cellRange(p.bay), Technician: cellRange(p.tech)},
+		})
+	})
+	switch {
+	case errors.Is(err, errNoPair), errors.Is(err, errCellsGone), errors.Is(err, scheduling.ErrNoQualifiedTechnician):
+		return Record{}, s.slotTakenError(ctx, p)
+	case errors.Is(err, scheduling.ErrDuplicateBooking):
+		return Record{}, s.keyOwner(ctx, a, p.start)
+	}
+	return rec, err
+}
+
+// movePlan is the plan for moving an existing appointment: its dealership and service type, the
+// appointment as the owner whose cells count as free, its id as the shuffle seed, and its current
+// pair as the preferred one.
+func (s *service) movePlan(ctx context.Context, a scheduling.Appointment, channel scheduling.Channel) (plan, error) {
+	cfg, err := s.workshop.DealershipConfig(ctx, a.DealershipID)
+	if err != nil {
+		return plan{}, fmt.Errorf("move appointment %s: %w", a.ID, err)
+	}
+	req, err := s.workshop.Requirement(ctx, a.ServiceTypeID)
+	if err != nil {
+		return plan{}, fmt.Errorf("move appointment %s: %w", a.ID, err)
+	}
+	return plan{cfg: cfg, req: req, channel: channel, id: a.ID, owner: a.ID,
+		prefer: scheduling.Candidate{BayID: a.ServiceBayID, TechID: a.TechnicianID}}, nil
+}
+
+// keyOwner answers a 1062 on the booking key of a move: DUPLICATE_BOOKING carrying the
+// appointment that owns the key the appointment would get at start (spec FR-015).
+func (s *service) keyOwner(ctx context.Context, a scheduling.Appointment, start time.Time) error {
+	key := scheduling.BookingKey{VehicleID: a.VehicleID, CustomerID: a.CustomerID, StartAt: start, Kind: a.Kind}
+	owner, found, err := s.store.AppointmentByBookingKey(ctx, key)
+	if err != nil {
+		return fmt.Errorf("look up booking key of vehicle %s: %w", a.VehicleID, err)
+	}
+	if !found {
+		return fmt.Errorf("booking key of appointment %s reported as duplicate but no appointment owns it", a.ID)
+	}
+	return s.duplicate(ctx, owner)
 }

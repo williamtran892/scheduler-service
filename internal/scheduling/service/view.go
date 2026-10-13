@@ -27,8 +27,8 @@ type AppointmentView struct {
 	CustomerRequests scheduling.CustomerRequests  `json:"customerRequests"`
 	Notes            string                       `json:"notes,omitempty"`
 	Channel          scheduling.Channel           `json:"channel"`
-	ActualStartAt    *time.Time                   `json:"actualStartAt"` // no column holds it yet: always null
-	ActualEndAt      *time.Time                   `json:"actualEndAt"`   // no column holds it yet: always null
+	ActualStartAt    *time.Time                   `json:"actualStartAt"` // null until the job starts
+	ActualEndAt      *time.Time                   `json:"actualEndAt"`   // null until the job is completed
 	Version          int                          `json:"version"`
 	CreatedAt        time.Time                    `json:"createdAt"`
 	UpdatedAt        time.Time                    `json:"updatedAt"`
@@ -119,6 +119,8 @@ func newView(r Record, staff bool) AppointmentView {
 		Technician:       technicianView{ID: r.Technician.ID},
 		CustomerRequests: a.CustomerRequests,
 		Channel:          a.Channel,
+		ActualStartAt:    inZone(a.ActualStartAt, loc),
+		ActualEndAt:      inZone(a.ActualEndAt, loc),
 		Version:          a.Version,
 		CreatedAt:        a.CreatedAt.UTC(),
 		UpdatedAt:        a.UpdatedAt.UTC(),
@@ -136,6 +138,15 @@ func newView(r Record, staff bool) AppointmentView {
 		v.Events = append(v.Events, ev)
 	}
 	return v
+}
+
+// inZone renders an optional instant in loc.
+func inZone(t *time.Time, loc *time.Location) *time.Time {
+	if t == nil {
+		return nil
+	}
+	v := t.In(loc)
+	return &v
 }
 
 func rangeView(r *scheduling.CellRange, loc *time.Location) *cellRangeView {

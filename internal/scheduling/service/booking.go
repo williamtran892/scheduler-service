@@ -24,18 +24,34 @@ const (
 	outboxConfirmed = "AppointmentConfirmed"
 )
 
-// plan is a booking request on its way through the checks: the dealership and service type it
-// resolved to, then the aligned start and the cell runs it needs, then the one appointment id the
-// whole request uses (it also seeds the tie shuffle).
+// plan is a request for cells on its way through the checks: the dealership and service type it
+// resolved to, the start it asked for, then the aligned start and the cell runs it needs, and the
+// one appointment id the whole request uses (it also seeds the tie shuffle). A booking fills cmd.
+// A reschedule or a late arrival moves an existing appointment instead: owner is its id, whose
+// cells count as free; pinBay and pinTech are the resources a reschedule names; prefer is the
+// pair tried first (research R4).
 type plan struct {
-	cmd   BookCommand
-	cfg   scheduling.DealershipConfig
-	req   scheduling.ServiceRequirement
-	start time.Time
-	bay   scheduling.CellRun
-	tech  scheduling.CellRun
-	id    string
+	cmd       BookCommand
+	cfg       scheduling.DealershipConfig
+	req       scheduling.ServiceRequirement
+	channel   scheduling.Channel
+	requested time.Time
+	start     time.Time
+	bay       scheduling.CellRun
+	tech      scheduling.CellRun
+	id        string
+
+	owner           string
+	pinBay, pinTech string
+	prefer          scheduling.Candidate
 }
+
+// errNoPair and errCellsGone end claim: every pair was tried, or the ledger cells went missing
+// twice. The caller turns them into its own answer.
+var (
+	errNoPair    = errors.New("no free pair left")
+	errCellsGone = errors.New("ledger cells missing again after recomputing")
+)
 
 // Book confirms an appointment, or returns the one that already owns the booking key.
 func (s *service) Book(ctx context.Context, cmd BookCommand) (Record, error) {
@@ -59,7 +75,18 @@ func (s *service) Book(ctx context.Context, cmd BookCommand) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	return s.claim(ctx, p, pairs)
+	rec, err := s.claim(ctx, p, pairs, func(pair scheduling.Candidate) (Record, error) {
+		return s.attempt(ctx, p, pair)
+	})
+	switch {
+	case errors.Is(err, errNoPair):
+		return s.slotTaken(ctx, p)
+	case errors.Is(err, errCellsGone):
+		return s.availabilityChanged(ctx, p)
+	case errors.Is(err, scheduling.ErrDuplicateBooking):
+		return s.afterDuplicate(ctx, p, err)
+	}
+	return rec, err
 }
 
 // resolve looks up the dealership, service type, customer and vehicle the request names. Each
@@ -91,7 +118,7 @@ func (s *service) resolve(ctx context.Context, cmd BookCommand) (plan, error) {
 	if vehicle.TenantID != cfg.TenantID || vehicle.CustomerID != customer.ID {
 		return plan{}, platform.InvalidValue("vehicleId", "is not a vehicle of this customer")
 	}
-	return plan{cmd: cmd, cfg: cfg, req: req}, nil
+	return plan{cmd: cmd, cfg: cfg, req: req, channel: cmd.Channel, requested: cmd.StartAt}, nil
 }
 
 // referenceError answers a failed lookup of a request field: no such row is INVALID_VALUE naming
@@ -140,12 +167,13 @@ func (s *service) duplicate(ctx context.Context, a scheduling.Appointment) error
 
 // validate applies the rules that need no capacity read, in order: customer channels may not
 // book staff-only services, the start is on the grid, after now and inside the booking horizon.
-// It returns the plan with its start and the runs the service type needs.
+// A reschedule's new start follows the same rules (spec FR-011). It returns the plan with its
+// start and the runs the service type needs.
 func (s *service) validate(p plan) (plan, error) {
-	if p.cmd.Channel.IsCustomer() && !p.req.OnlineBookable {
+	if p.channel.IsCustomer() && !p.req.OnlineBookable {
 		return plan{}, fmt.Errorf("%s: %w", p.req.Code, scheduling.ErrNotBookableOnline)
 	}
-	start, err := p.cfg.Grid.Align(p.cmd.StartAt.UTC())
+	start, err := p.cfg.Grid.Align(p.requested.UTC())
 	if err != nil {
 		return plan{}, fmt.Errorf("%s: %w", p.cfg.Code, err)
 	}
@@ -180,35 +208,84 @@ func (s *service) checkWorkingTime(ctx context.Context, p plan) error {
 }
 
 // candidates returns the (bay, technician) pairs that can take the request's runs, least-loaded
-// first. It answers NO_QUALIFIED_TECHNICIAN when nobody active holds the required skills on the
-// local date.
+// first, with the plan's preferred pair ahead of them when it is one. It answers
+// NO_QUALIFIED_TECHNICIAN when nobody active holds the required skills on the local date, and
+// refuses the resources a reschedule names when they do not fit the service type.
 func (s *service) candidates(ctx context.Context, p plan) ([]scheduling.Candidate, error) {
 	day := p.cfg.Day(p.start)
 	bays, techs, err := s.workshop.Resources(ctx, p.cfg.DealershipID, day.LocalDate)
 	if err != nil {
 		return nil, err
 	}
+	if err := p.checkPins(bays, techs); err != nil {
+		return nil, err
+	}
 	if !slices.ContainsFunc(techs, func(t scheduling.Technician) bool { return t.HasAll(p.req.RequiredSkills) }) {
 		return nil, fmt.Errorf("no active technician at %s holds %s on %s: %w", p.cfg.Code,
 			strings.Join(p.req.RequiredSkills, ", "), day.LocalDate, scheduling.ErrNoQualifiedTechnician)
 	}
-	islands, loads, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day, "")
+	islands, loads, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day, p.owner)
 	if err != nil {
 		return nil, err
 	}
-	return scheduling.CandidatePairs(p.start, p.cfg.Grid, p.req, bays, techs, islands, loads, scheduling.SeedFrom(p.id)), nil
+	bays, techs = p.restrict(bays, techs)
+	pairs := scheduling.CandidatePairs(p.start, p.cfg.Grid, p.req, bays, techs, islands, loads, scheduling.SeedFrom(p.id))
+	if i := slices.IndexFunc(pairs, func(c scheduling.Candidate) bool {
+		return c.BayID == p.prefer.BayID && c.TechID == p.prefer.TechID
+	}); i > 0 {
+		preferred := pairs[i]
+		pairs = slices.Insert(slices.Delete(pairs, i, i+1), 0, preferred)
+	}
+	return pairs, nil
 }
 
-// claim tries the candidate pairs in order, one transaction each (notes 4.4). A pair that was
-// taken moves on to the next; a deadlock victim is retried once on the same pair; missing cells
-// recompute the candidates once and start again; a booking key that already has an appointment
-// answers with it.
-func (s *service) claim(ctx context.Context, p plan, pairs []scheduling.Candidate) (Record, error) {
+// checkPins refuses a named bay or technician that cannot do the job: unknown, inactive, or a bay
+// of a type the service does not allow is INVALID_VALUE naming the field; a technician without
+// the required skills on the day is NO_QUALIFIED_TECHNICIAN (spec FR-012).
+func (p plan) checkPins(bays []scheduling.ServiceBay, techs []scheduling.Technician) error {
+	if p.pinBay != "" {
+		i := slices.IndexFunc(bays, func(b scheduling.ServiceBay) bool { return b.ID == p.pinBay })
+		if i < 0 || !slices.Contains(p.req.AllowedBayTypes, bays[i].Type) {
+			return platform.InvalidValue("serviceBayId", "is not an active bay of this dealership of a type the service type allows")
+		}
+	}
+	if p.pinTech != "" {
+		i := slices.IndexFunc(techs, func(t scheduling.Technician) bool { return t.ID == p.pinTech })
+		if i < 0 {
+			return platform.InvalidValue("technicianId", "is not an active technician of this dealership")
+		}
+		if !techs[i].HasAll(p.req.RequiredSkills) {
+			return fmt.Errorf("technician %s does not hold %s on %s: %w", p.pinTech,
+				strings.Join(p.req.RequiredSkills, ", "), p.cfg.Day(p.start).LocalDate, scheduling.ErrNoQualifiedTechnician)
+		}
+	}
+	return nil
+}
+
+// restrict keeps only the bay and the technician the plan names, when it names them.
+func (p plan) restrict(bays []scheduling.ServiceBay, techs []scheduling.Technician) ([]scheduling.ServiceBay, []scheduling.Technician) {
+	if p.pinBay != "" {
+		bays = slices.DeleteFunc(slices.Clone(bays), func(b scheduling.ServiceBay) bool { return b.ID != p.pinBay })
+	}
+	if p.pinTech != "" {
+		techs = slices.DeleteFunc(slices.Clone(techs), func(t scheduling.Technician) bool { return t.ID != p.pinTech })
+	}
+	return bays, techs
+}
+
+// claim tries the candidate pairs in order, one attempt (one transaction) each (notes 4.4). A pair
+// that was taken moves on to the next; a deadlock victim is retried once on the same pair;
+// missing cells recompute the candidates once and start again. It returns the record of the
+// first attempt that succeeds, errNoPair when no pair is left, errCellsGone when cells went
+// missing twice, and any other error an attempt returned (a duplicate booking key, a stale
+// version) unchanged.
+func (s *service) claim(ctx context.Context, p plan, pairs []scheduling.Candidate,
+	attempt func(scheduling.Candidate) (Record, error)) (Record, error) {
 	recomputed := false
 	for i := 0; i < len(pairs); i++ {
-		rec, err := s.attempt(ctx, p, pairs[i])
+		rec, err := attempt(pairs[i])
 		if errors.Is(err, scheduling.ErrDeadlockVictim) {
-			rec, err = s.attempt(ctx, p, pairs[i])
+			rec, err = attempt(pairs[i])
 		}
 
 		switch {
@@ -218,20 +295,18 @@ func (s *service) claim(ctx context.Context, p plan, pairs []scheduling.Candidat
 			// the pair is gone; try the next one
 		case errors.Is(err, scheduling.ErrCellsMissing):
 			if recomputed {
-				return s.availabilityChanged(ctx, p)
+				return Record{}, errCellsGone
 			}
 			recomputed = true
 			if pairs, err = s.candidates(ctx, p); err != nil {
 				return Record{}, err
 			}
 			i = -1 // start again with the recomputed pairs
-		case errors.Is(err, scheduling.ErrDuplicateBooking):
-			return s.afterDuplicate(ctx, p, err)
 		default:
 			return Record{}, err
 		}
 	}
-	return s.slotTaken(ctx, p)
+	return Record{}, errNoPair
 }
 
 // attempt is one booking transaction on one pair, in the statement order that is the
@@ -320,11 +395,16 @@ func (s *service) slotTaken(ctx context.Context, p plan) (Record, error) {
 	if rec, answered, err := s.existing(ctx, p.cmd); answered {
 		return rec, err
 	}
+	return Record{}, s.slotTakenError(ctx, p)
+}
+
+// slotTakenError is the SLOT_TAKEN answer with the plan's alternatives.
+func (s *service) slotTakenError(ctx context.Context, p plan) error {
 	alternatives, err := s.alternatives(ctx, p)
 	if err != nil {
-		return Record{}, err
+		return err
 	}
-	return Record{}, &scheduling.SlotTakenError{Alternatives: alternatives, Location: p.cfg.Location}
+	return &scheduling.SlotTakenError{Alternatives: alternatives, Location: p.cfg.Location}
 }
 
 // availabilityChanged ends a booking whose cells kept disappearing with 409
@@ -333,15 +413,21 @@ func (s *service) availabilityChanged(ctx context.Context, p plan) (Record, erro
 	if rec, answered, err := s.existing(ctx, p.cmd); answered {
 		return rec, err
 	}
+	return Record{}, s.availabilityChangedError(ctx, p)
+}
+
+// availabilityChangedError is the AVAILABILITY_CHANGED answer with the plan's alternatives.
+func (s *service) availabilityChangedError(ctx context.Context, p plan) error {
 	alternatives, err := s.alternatives(ctx, p)
 	if err != nil {
-		return Record{}, err
+		return err
 	}
-	return Record{}, &scheduling.AvailabilityChangedError{Alternatives: alternatives, Location: p.cfg.Location}
+	return &scheduling.AvailabilityChangedError{Alternatives: alternatives, Location: p.cfg.Location}
 }
 
 // alternatives returns the nearest feasible starts for the same service type, freshly computed
-// over the requested local date and the next one (research R7).
+// over the requested local date and the next one (research R7), with the plan's owner cells
+// free and its named resources respected.
 func (s *service) alternatives(ctx context.Context, p plan) ([]scheduling.Slot, error) {
 	first := p.cfg.Day(p.start)
 	var starts []time.Time
@@ -350,10 +436,11 @@ func (s *service) alternatives(ctx context.Context, p plan) ([]scheduling.Slot, 
 		if err != nil {
 			return nil, err
 		}
-		islands, _, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day, "")
+		islands, _, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day, p.owner)
 		if err != nil {
 			return nil, err
 		}
+		bays, techs = p.restrict(bays, techs)
 		starts = append(starts, scheduling.FeasibleStarts(day, p.cfg.Grid, p.req, bays, techs, islands)...)
 	}
 
