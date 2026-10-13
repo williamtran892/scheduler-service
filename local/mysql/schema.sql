@@ -271,6 +271,7 @@ CREATE TABLE appointment (
     KEY ix_appointment_day      (dealership_id, start_at),
     KEY ix_appointment_customer (customer_id, start_at),
     KEY ix_appointment_vehicle  (vehicle_id, start_at),
+    KEY ix_appointment_sweep    (status, start_at),           -- the no-show sweeper: CONFIRMED rows past start + grace, oldest first
     CONSTRAINT fk_appt_tenant     FOREIGN KEY (tenant_id)       REFERENCES tenant(id),
     CONSTRAINT fk_appt_dealership FOREIGN KEY (dealership_id)   REFERENCES dealership(id),
     CONSTRAINT fk_appt_customer   FOREIGN KEY (customer_id)     REFERENCES customer(id),

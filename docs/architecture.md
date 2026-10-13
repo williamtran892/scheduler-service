@@ -332,6 +332,7 @@ the actual times (`actual_start_at`, `actual_end_at`, null until the job starts 
 only the ledger is quantised. The unique index `uq_appointment_booking` on `(vehicle_id,
 customer_id, start_at, kind)` covers every status, and it is global across dealerships. The
 outbox rows are written with each booking and transition and not published: no relay exists yet.
+`ix_appointment_sweep` on `(status, start_at)` serves the sweeper's query for CONFIRMED appointments past their grace period, so a tick is an index range scan, not a table scan.
 
 The fixture creates the setup rows, the customers and the ledger's cells; the application inserts
 `appointment`, `appointment_event` and `outbox` rows, updates `appointment` rows on every
