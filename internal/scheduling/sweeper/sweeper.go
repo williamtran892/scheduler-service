@@ -5,6 +5,8 @@ package sweeper
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/go-kit/log"
@@ -41,14 +43,55 @@ type Service interface {
 }
 
 // NewService builds the sweeper over the due-appointment query, the no-show transition, the
-// clock and the grace period. Not implemented yet.
+// clock and the grace period. Failures are logged on logger: a run that cannot list the
+// appointments, and each appointment it could not mark.
 func NewService(appointments Appointments, marker Marker, clock platform.Clock, grace time.Duration, logger log.Logger) Service {
-	return stub{}
+	return &sweeper{appointments: appointments, marker: marker, clock: clock, grace: grace, logger: logger}
 }
 
-type stub struct{}
+type sweeper struct {
+	appointments Appointments
+	marker       Marker
+	clock        platform.Clock
+	grace        time.Duration
+	logger       log.Logger
+}
 
-func (stub) RunOnce(context.Context) (Report, error) { panic("not implemented") }
+// RunOnce marks NO_SHOW every CONFIRMED appointment whose start plus the grace period is strictly
+// before now, oldest first, each through the service's own MarkNoShow so it is one transaction
+// per appointment (spec FR-051). An appointment that another actor changed first (a version
+// conflict, or a status that no longer allows the transition) is skipped; any other failure is
+// logged and counted, and the run goes on (spec FR-052).
+func (w *sweeper) RunOnce(ctx context.Context) (Report, error) {
+	cutoff := w.clock.Now().Add(-w.grace)
+	due, err := w.appointments.DueNoShows(ctx, cutoff)
+	if err != nil {
+		_ = w.logger.Log("msg", "list due no-shows", "err", err)
+		return Report{}, fmt.Errorf("list due no-shows: %w", err)
+	}
+
+	var report Report
+	for _, a := range due {
+		if err := ctx.Err(); err != nil {
+			return report, err
+		}
+		if a.Status != scheduling.StatusConfirmed || !a.StartAt.Before(cutoff) {
+			report.Skipped++
+			continue
+		}
+		_, err := w.marker.MarkNoShow(ctx, service.TransitionCommand{AppointmentID: a.ID, ExpectedVersion: a.Version, Actor: Actor})
+		switch {
+		case err == nil:
+			report.Marked++
+		case errors.Is(err, scheduling.ErrStaleVersion), errors.Is(err, scheduling.ErrInvalidTransition):
+			report.Skipped++
+		default:
+			report.Failed++
+			_ = w.logger.Log("msg", "mark no-show", "appointment", a.ID, "err", err)
+		}
+	}
+	return report, nil
+}
 
 // Worker runs a Service on a ticker until its context ends.
 type Worker struct {
@@ -63,5 +106,16 @@ func NewWorker(svc Service, every time.Duration) Worker {
 
 // Run returns the function an errgroup runs: RunOnce on every tick, until ctx ends.
 func (w Worker) Run(ctx context.Context) func() error {
-	return func() error { panic("not implemented") }
+	return func() error {
+		ticker := time.NewTicker(w.every)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-ticker.C:
+				_, _ = w.svc.RunOnce(ctx) // RunOnce logs its own failures
+			}
+		}
+	}
 }

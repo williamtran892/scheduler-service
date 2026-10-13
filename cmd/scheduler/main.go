@@ -1,6 +1,6 @@
 // Command scheduler is the one entry point: it loads configuration, opens the MySQL pool,
-// wires the domains, builds the HTTP handler and runs the server (and, later, the workers) in
-// one errgroup under a signal-cancelled context.
+// wires the domains, builds the HTTP handler and runs the server and the no-show sweeper in one
+// errgroup under a signal-cancelled context.
 package main
 
 import (
@@ -24,6 +24,7 @@ import (
 	"scheduler/internal/scheduling/adapters"
 	schedmysql "scheduler/internal/scheduling/mysql"
 	schedsvc "scheduler/internal/scheduling/service"
+	"scheduler/internal/scheduling/sweeper"
 	setupmysql "scheduler/internal/setup/mysql"
 )
 
@@ -65,9 +66,11 @@ func run(logger log.Logger) error {
 	}
 	defer db.Close()
 
+	store := schedmysql.New(db)
+	schedulingSvc := newSchedulingService(db, store, logger)
 	handler := app.NewHandler(app.Deps{
 		DB:         db,
-		Scheduling: schedsvc.MakeServerEndpoints(newSchedulingService(db, logger)),
+		Scheduling: schedsvc.MakeServerEndpoints(schedulingSvc),
 	})
 	srv := &http.Server{Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 
@@ -85,7 +88,16 @@ func run(logger log.Logger) error {
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	})
-	// Workers join the group here: g.Go(relay.NewWorker(relaySvc, every).Run(gctx)).
+	// The no-show sweeper marks overdue appointments through the same wrapped service the HTTP
+	// handlers use. It stops with the context, which is a normal exit.
+	sweep := sweeper.NewWorker(sweeper.NewService(store, schedulingSvc, platform.RealClock{}, cfg.NoShowGrace,
+		log.With(logger, "component", "sweeper")), cfg.NoShowSweepInterval)
+	g.Go(func() error {
+		if err := sweep.Run(gctx)(); !errors.Is(err, context.Canceled) {
+			return err
+		}
+		return nil
+	})
 
 	return g.Wait()
 }
@@ -93,11 +105,11 @@ func run(logger log.Logger) error {
 // newSchedulingService wires the Scheduling service: its store, the adapters over the setup and
 // customers repositories, the real clock and ids, and its middleware, outermost last so tracing
 // runs first.
-func newSchedulingService(db *sql.DB, logger log.Logger) schedsvc.Service {
+func newSchedulingService(db *sql.DB, store *schedmysql.Store, logger log.Logger) schedsvc.Service {
 	workshop := adapters.NewWorkshopReader(setupmysql.New(db))
 	customers := adapters.NewCustomerReader(customersmysql.New(db))
 
-	svc := schedsvc.NewService(schedmysql.New(db), workshop, customers, platform.RealClock{}, platform.UUIDs{})
+	svc := schedsvc.NewService(store, workshop, customers, platform.RealClock{}, platform.UUIDs{})
 	svc = schedsvc.LoggingMiddleware(log.With(logger, "component", "scheduling"))(svc)
 	svc = schedsvc.InstrumentingMiddleware(otel.Meter("scheduler"))(svc)
 	return schedsvc.TracingMiddleware(otel.Tracer("scheduler"))(svc)
