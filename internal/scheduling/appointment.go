@@ -70,7 +70,7 @@ type ResourceRun struct {
 	Run        CellRun
 }
 
-// Keep says which of an appointment's cells a release keeps (research R3): the cells inside the
+// Keep says which of an appointment's cells a release keeps: the cells inside the
 // kept bay run and technician run, matched on resource id as well as time, and the cells that
 // start before Before. The zero Keep keeps nothing.
 type Keep struct {

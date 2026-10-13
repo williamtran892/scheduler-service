@@ -13,13 +13,13 @@ import (
 	"scheduler/internal/scheduling"
 )
 
-// MySQL error numbers the booking transaction reacts to.
+// MySQL error numbers a transaction reacts to.
 const (
 	errDuplicateEntry = 1062
 	errDeadlock       = 1213
 )
 
-// mapError turns the MySQL errors the booking transaction must react to into Scheduling's
+// mapError turns the MySQL errors a transaction must react to into Scheduling's
 // errors: 1062 on uq_appointment_booking is scheduling.ErrDuplicateBooking and 1213 is
 // scheduling.ErrDeadlockVictim. Anything else is returned unchanged.
 func mapError(err error) error {

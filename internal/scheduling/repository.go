@@ -28,7 +28,7 @@ type Store interface {
 	DueNoShows(ctx context.Context, before time.Time) ([]Appointment, error)
 }
 
-// Tx is the part of Store that runs inside one booking transaction.
+// Tx is the part of Store that runs inside one transaction: a booking attempt or a transition.
 type Tx interface {
 	// InsertAppointment is the first statement of a booking attempt; a duplicate booking key
 	// is ErrDuplicateBooking.

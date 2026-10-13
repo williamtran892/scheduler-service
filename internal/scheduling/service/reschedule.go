@@ -10,12 +10,14 @@ import (
 )
 
 // Reschedule moves a CONFIRMED appointment, reusing booking's plan with the appointment as the
-// owner whose cells count as free (design 5.4; research R4). The new start is startAt, or the
+// owner whose cells count as free (design 5.4). The new start is startAt, or the
 // current start for a pure reassign; a named bay or technician restricts the candidates. The
 // appointment's own pair is tried first, with the named resources put in its place.
 func (s *service) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record, error) {
-	if cmd.Channel.IsCustomer() && (cmd.TechnicianID != "" || cmd.ServiceBayID != "") {
-		return Record{}, fmt.Errorf("naming the bay or the technician is a staff action: %w", scheduling.ErrForbidden)
+	if cmd.TechnicianID != "" || cmd.ServiceBayID != "" {
+		if err := staffOnly(cmd.Channel, "naming the bay or the technician"); err != nil {
+			return Record{}, err
+		}
 	}
 	a, err := s.begin(ctx, cmd.TransitionCommand, scheduling.StatusConfirmed)
 	if err != nil {
@@ -76,11 +78,11 @@ func (s *service) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record
 	return rec, err
 }
 
-// lateArrival checks a NO_SHOW appointment in on the cells that are free now (spec FR-031): the
+// lateArrival checks a NO_SHOW appointment in on the cells that are free now (design 4.3): the
 // new start is the grid cell that contains now, the runs follow from the service type as in
 // booking, and the previous pair is tried first, then the least-loaded. The booking horizon and
 // "after now" do not apply. Every way of finding no pair, whether the cells are taken or missing
-// or nobody is qualified, is SLOT_TAKEN with alternatives (spec FR-032), and the appointment
+// or nobody is qualified, is SLOT_TAKEN with alternatives, and the appointment
 // stays NO_SHOW.
 func (s *service) lateArrival(ctx context.Context, cmd TransitionCommand, a scheduling.Appointment, payload eventPayload) (Record, error) {
 	p, err := s.movePlan(ctx, a, cmd.Channel)
@@ -138,7 +140,7 @@ func (s *service) movePlan(ctx context.Context, a scheduling.Appointment, channe
 }
 
 // keyOwner answers a 1062 on the booking key of a move: DUPLICATE_BOOKING carrying the
-// appointment that owns the key the appointment would get at start (spec FR-015).
+// appointment that owns the key the appointment would get at start. The key covers every status.
 func (s *service) keyOwner(ctx context.Context, a scheduling.Appointment, start time.Time) error {
 	key := scheduling.BookingKey{VehicleID: a.VehicleID, CustomerID: a.CustomerID, StartAt: start, Kind: a.Kind}
 	owner, found, err := s.store.AppointmentByBookingKey(ctx, key)

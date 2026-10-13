@@ -9,12 +9,13 @@ import (
 	"scheduler/internal/scheduling"
 )
 
-// The lifecycle transitions after booking (design 4.3; research R1, R5, R6, R8): one transaction
+// The lifecycle transitions after booking (design 4.3, 5.4, 5.6, 11.4; notes 4.4): one transaction
 // each, the version-guarded update of the appointment first, then the ledger change, then the
-// audit event and the outbox row. The checks run in spec FR-003's order: the channel, the
-// appointment, the version, the state machine, then the operation's own rules.
+// audit event and the outbox row. The checks run in this order, stopping at the first that
+// fails: the channel, the appointment, the version, the state machine, then the operation's own
+// rules.
 
-// Audit event types and outbox event types of each transition (research R11).
+// Audit event types and outbox event types of each transition (design 6).
 const (
 	eventRescheduled = "RESCHEDULED"
 	eventCancelled   = "CANCELLED"
@@ -31,8 +32,9 @@ const (
 	outboxNoShow      = "AppointmentNoShow"
 )
 
-// eventPayload is the audit payload of every transition. Each transition fills the members
-// research R11 lists for it; the others stay out of the JSON.
+// eventPayload is the audit payload of every transition. Each transition fills the members that
+// apply to it (the reason when given, the previous and new placement of a move, the check-in
+// details, the actual time, the cells released); the others stay out of the JSON.
 type eventPayload struct {
 	Reason             string     `json:"reason,omitempty"`
 	PreviousStatus     string     `json:"previousStatus,omitempty"`
@@ -78,7 +80,8 @@ type change struct {
 }
 
 // Cancel releases every cell of a CONFIRMED or CHECKED_IN appointment; a CANCELLED one is
-// returned unchanged, whatever expectedVersion says (spec FR-021).
+// returned unchanged, whatever expectedVersion says: a retried cancel carries the version it was
+// first sent with.
 func (s *service) Cancel(ctx context.Context, cmd TransitionCommand) (Record, error) {
 	a, err := s.store.Appointment(ctx, cmd.AppointmentID)
 	if err != nil {
@@ -101,8 +104,8 @@ func (s *service) Cancel(ctx context.Context, cmd TransitionCommand) (Record, er
 // MarkNoShow marks a CONFIRMED appointment NO_SHOW and releases every cell. Staff and the
 // no-show sweeper use it alike.
 func (s *service) MarkNoShow(ctx context.Context, cmd TransitionCommand) (Record, error) {
-	if cmd.Channel.IsCustomer() {
-		return Record{}, fmt.Errorf("no-show is a staff action: %w", scheduling.ErrForbidden)
+	if err := staffOnly(cmd.Channel, "no-show"); err != nil {
+		return Record{}, err
 	}
 	a, err := s.begin(ctx, cmd, scheduling.StatusNoShow)
 	if err != nil {
@@ -118,10 +121,10 @@ func (s *service) MarkNoShow(ctx context.Context, cmd TransitionCommand) (Record
 }
 
 // CheckIn checks a CONFIRMED appointment in and leaves the ledger alone, or checks a NO_SHOW
-// appointment in as a late arrival (spec FR-030, FR-031).
+// appointment in as a late arrival.
 func (s *service) CheckIn(ctx context.Context, cmd CheckInCommand) (Record, error) {
-	if cmd.Channel.IsCustomer() {
-		return Record{}, fmt.Errorf("check-in is a staff action: %w", scheduling.ErrForbidden)
+	if err := staffOnly(cmd.Channel, "check-in"); err != nil {
+		return Record{}, err
 	}
 	a, err := s.begin(ctx, cmd.TransitionCommand, scheduling.StatusCheckedIn)
 	if err != nil {
@@ -145,10 +148,10 @@ func (s *service) CheckIn(ctx context.Context, cmd CheckInCommand) (Record, erro
 }
 
 // Start records the actual start of a CHECKED_IN appointment: startedAt when the dealer system
-// sent one, otherwise now. It leaves the ledger alone (spec FR-040).
+// sent one, otherwise now. It leaves the ledger alone.
 func (s *service) Start(ctx context.Context, cmd StartCommand) (Record, error) {
-	if cmd.Channel.IsCustomer() {
-		return Record{}, fmt.Errorf("start is a staff action: %w", scheduling.ErrForbidden)
+	if err := staffOnly(cmd.Channel, "start"); err != nil {
+		return Record{}, err
 	}
 	a, err := s.begin(ctx, cmd.TransitionCommand, scheduling.StatusInProgress)
 	if err != nil {
@@ -180,10 +183,11 @@ func (s *service) Start(ctx context.Context, cmd StartCommand) (Record, error) {
 
 // Complete records the actual end of an IN_PROGRESS appointment, completedAt when the dealer
 // system sent one, otherwise now, and releases the cells that start at or after the current grid
-// cell rounded up. Which cells go depends on now, never on completedAt (spec FR-041).
+// cell rounded up (design 4.3). Which cells go depends on now, never on completedAt: the ledger
+// must show what is free from now on.
 func (s *service) Complete(ctx context.Context, cmd CompleteCommand) (Record, error) {
-	if cmd.Channel.IsCustomer() {
-		return Record{}, fmt.Errorf("complete is a staff action: %w", scheduling.ErrForbidden)
+	if err := staffOnly(cmd.Channel, "complete"); err != nil {
+		return Record{}, err
 	}
 	a, err := s.begin(ctx, cmd.TransitionCommand, scheduling.StatusCompleted)
 	if err != nil {
@@ -238,9 +242,19 @@ func cellsBefore(r *scheduling.CellRange, before time.Time, slot time.Duration) 
 	return &scheduling.CellRange{From: r.From, To: to, Cells: int(to.Sub(r.From) / slot)}
 }
 
-// begin loads the appointment and runs the checks every transition shares, in FR-003's order:
-// the appointment exists (scheduling.ErrNotFound), expectedVersion is its version, and the state
-// machine allows moving to to.
+// staffOnly refuses a customer channel an action only staff may take: the channel is checked
+// before anything is read. X-Channel stands in for the token's channel claim until authentication
+// exists.
+func staffOnly(channel scheduling.Channel, action string) error {
+	if channel.IsCustomer() {
+		return fmt.Errorf("%s is a staff action: %w", action, scheduling.ErrForbidden)
+	}
+	return nil
+}
+
+// begin loads the appointment and runs the checks every transition shares: the appointment
+// exists (scheduling.ErrNotFound), expectedVersion is its version, and the state machine allows
+// moving to to.
 func (s *service) begin(ctx context.Context, cmd TransitionCommand, to scheduling.AppointmentStatus) (scheduling.Appointment, error) {
 	a, err := s.store.Appointment(ctx, cmd.AppointmentID)
 	if err != nil {
@@ -250,7 +264,8 @@ func (s *service) begin(ctx context.Context, cmd TransitionCommand, to schedulin
 }
 
 // checkTransition refuses a stale expectedVersion, naming both versions, before a status the
-// state machine does not allow: a stale caller's idea of the status is unreliable (spec FR-003).
+// state machine does not allow: a stale caller's idea of the status is unreliable, so it is told
+// to read the appointment again first.
 func checkTransition(a scheduling.Appointment, cmd TransitionCommand, to scheduling.AppointmentStatus) error {
 	if cmd.ExpectedVersion != a.Version {
 		return &scheduling.VersionConflictError{Current: a.Version, Sent: cmd.ExpectedVersion}
@@ -271,8 +286,9 @@ func (s *service) next(a scheduling.Appointment, status scheduling.AppointmentSt
 }
 
 // apply runs one transition in one transaction, in the statement order that is the correctness
-// argument (research R1): the version-guarded update of the appointment, the claim, the release,
-// the audit event, the outbox row. It returns the record after the transition, which is also what
+// argument: the version-guarded update of the appointment, which locks its row so two transitions
+// of one appointment serialise there, then the claim, the release, the audit event and the
+// outbox row. It returns the record after the transition, which is also what
 // the outbox row holds. The record is read before the transaction, like booking's.
 func (s *service) apply(ctx context.Context, cmd TransitionCommand, a, next scheduling.Appointment, ch change) (Record, error) {
 	rec, err := s.record(ctx, next, ch.cells)

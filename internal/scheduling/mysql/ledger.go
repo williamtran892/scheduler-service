@@ -22,8 +22,8 @@ func (tx *Tx) ClaimPair(dealershipID, bayID string, bayRun scheduling.CellRun,
 }
 
 // ReleaseCells frees every cell the appointment owns that keep does not keep and returns how many
-// it freed (research R3). It locks the appointment's cells, filters them in Go with Keep.Keeps,
-// and frees the rest with one UPDATE per resource.
+// it freed. It locks the appointment's cells, filters them in Go with Keep.Keeps, and frees the
+// rest with one UPDATE per resource.
 func (tx *Tx) ReleaseCells(appointmentID string, keep scheduling.Keep) (int, error) {
 	rows, err := tx.tx.QueryContext(tx.ctx, `
 		SELECT resource_kind, resource_id, slot_start
@@ -89,9 +89,9 @@ type cell struct {
 
 // claimRun locks the cells of one run, checks in Go that every one exists and is FREE, then marks
 // them BOOKED. A cell the appointment already owns counts as free, so a reschedule can claim runs
-// that overlap its own cells (research R2). The locking read is a current read: two claimers of overlapping cells serialise on
-// the first shared row, and the loser sees BOOKED and stops before writing. Without FOR UPDATE a
-// read at REPEATABLE READ would see a snapshot and double book.
+// that overlap its own cells. The locking read is a current read: two claimers of overlapping
+// cells serialise on the first shared row, and the loser sees BOOKED and stops before writing.
+// Without FOR UPDATE a read at REPEATABLE READ would see a snapshot and double book.
 func (tx *Tx) claimRun(dealershipID string, kind scheduling.ResourceKind, id string, run scheduling.CellRun,
 	appointmentID string, missing error) error {
 	rows, err := tx.tx.QueryContext(tx.ctx, `
@@ -150,7 +150,7 @@ func scanCells(rows *sql.Rows) ([]cell, error) {
 // reads from another domain's table, through time_slot's own foreign key.
 //
 // The cells booked by owner count as free: they join the islands and are left out of the loads, so
-// a reschedule sees the appointment's own time as available (research R4). owner is "" for a new
+// a reschedule sees the appointment's own time as available (design 5.4). owner is "" for a new
 // booking, which no appointment id equals.
 func (s *Store) DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, scheduling.Loads, error) {
 	islands, err := s.islands(ctx, dealershipID, day, owner)

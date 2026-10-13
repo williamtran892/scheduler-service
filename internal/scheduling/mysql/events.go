@@ -9,7 +9,7 @@ import (
 	"scheduler/internal/scheduling"
 )
 
-// AppendEvent appends an appointment_event row inside the booking transaction. payload is
+// AppendEvent appends an appointment_event row inside the transaction. payload is
 // stored as JSON. An empty channel, the no-show sweeper's, is stored as NULL.
 func (tx *Tx) AppendEvent(appointmentID, eventType, actor string, channel scheduling.Channel, payload any) error {
 	body, err := json.Marshal(payload)

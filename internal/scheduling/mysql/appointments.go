@@ -38,7 +38,7 @@ func (tx *Tx) InsertAppointment(a scheduling.Appointment) error {
 	return nil
 }
 
-// UpdateAppointment writes a transition's new state under the version check (research R1): the
+// UpdateAppointment writes a transition's new state under the version check: the
 // statement matches the row only while its version is expectedVersion, and raises the version by
 // one, so it always changes the row it matches and zero affected rows means the appointment moved
 // on since the caller read it (scheduling.ErrStaleVersion). A new start that is another

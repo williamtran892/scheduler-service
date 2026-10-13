@@ -1,4 +1,4 @@
-// Package sweeper is the no-show sweeper (design 4.3; notes 4.7; research R7): a worker that,
+// Package sweeper is the no-show sweeper (design 4.3; notes 4.7): a worker that,
 // on an interval, marks every CONFIRMED appointment whose start plus the grace period has passed
 // as NO_SHOW, through the Scheduling service's own MarkNoShow, one appointment per transaction.
 package sweeper
@@ -59,9 +59,9 @@ type sweeper struct {
 
 // RunOnce marks NO_SHOW every CONFIRMED appointment whose start plus the grace period is strictly
 // before now, oldest first, each through the service's own MarkNoShow so it is one transaction
-// per appointment (spec FR-051). An appointment that another actor changed first (a version
+// per appointment. An appointment that another actor changed first (a version
 // conflict, or a status that no longer allows the transition) is skipped; any other failure is
-// logged and counted, and the run goes on (spec FR-052).
+// logged and counted, and the run goes on.
 func (w *sweeper) RunOnce(ctx context.Context) (Report, error) {
 	cutoff := w.clock.Now().Add(-w.grace)
 	due, err := w.appointments.DueNoShows(ctx, cutoff)

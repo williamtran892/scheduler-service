@@ -21,7 +21,7 @@ var _ scheduling.Store = (*Store)(nil)
 // New returns a store over db.
 func New(db *sql.DB) *Store { return &Store{db: db} }
 
-// Tx is one booking transaction. It implements scheduling.Tx.
+// Tx is one transaction: a booking attempt or a lifecycle transition. It implements scheduling.Tx.
 type Tx struct {
 	ctx context.Context
 	tx  *sql.Tx

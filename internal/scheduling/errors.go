@@ -39,7 +39,7 @@ var (
 	ErrDuplicateBooking      = &Error{Code: "DUPLICATE_BOOKING", Message: "booking key already has an appointment"}
 	ErrDeadlockVictim        = &Error{Code: "SLOT_TAKEN", Message: "deadlock victim"}
 
-	// Lifecycle errors (feature 002).
+	// Lifecycle errors.
 	ErrStaleVersion      = &Error{Code: "VERSION_CONFLICT", Message: "appointment version conflict"}
 	ErrInvalidTransition = &Error{Code: "INVALID_TRANSITION", Message: "transition not allowed from the appointment's status"}
 	ErrForbidden         = &Error{Code: "FORBIDDEN", Message: "the calling channel may not perform this action"}

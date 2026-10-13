@@ -27,7 +27,7 @@ type Config struct {
 	OTelExporter    string        // OTEL_EXPORTER: none, stdout or otlp
 	ShutdownTimeout time.Duration // SHUTDOWN_TIMEOUT
 
-	// The no-show sweeper (feature 002).
+	// The no-show sweeper.
 	NoShowGrace         time.Duration // NO_SHOW_GRACE: start plus this, passed, is a no-show
 	NoShowSweepInterval time.Duration // NO_SHOW_SWEEP_INTERVAL: how often the sweeper runs
 }

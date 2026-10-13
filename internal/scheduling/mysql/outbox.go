@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// AppendOutbox appends an outbox row inside the booking transaction, unpublished
+// AppendOutbox appends an outbox row inside the transaction, unpublished
 // (published_at stays NULL; nothing relays it in this release). payload is stored as JSON.
 func (tx *Tx) AppendOutbox(aggregateType, aggregateID, eventType string, payload any) error {
 	body, err := json.Marshal(payload)

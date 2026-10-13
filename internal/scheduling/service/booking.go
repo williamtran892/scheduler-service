@@ -12,8 +12,9 @@ import (
 	"scheduler/internal/scheduling"
 )
 
-// The booking flow (research R4) is implemented here: checks in order, the booking-key lookups,
-// candidate selection and the one-transaction-per-pair loop (implementation notes 4.4).
+// The booking flow is implemented here: checks in order, the booking-key lookups, candidate
+// selection and the one-transaction-per-pair loop (implementation notes 4.4). Reschedule and the
+// late arrival reuse its plan, checks, candidate search and claim loop (reschedule.go).
 
 const (
 	maxAlternatives = 5 // contract Problem.alternatives: up to five nearest feasible starts
@@ -29,7 +30,7 @@ const (
 // one appointment id the whole request uses (it also seeds the tie shuffle). A booking fills cmd.
 // A reschedule or a late arrival moves an existing appointment instead: owner is its id, whose
 // cells count as free; pinBay and pinTech are the resources a reschedule names; prefer is the
-// pair tried first (research R4).
+// pair tried first (design 5.4).
 type plan struct {
 	cmd       BookCommand
 	cfg       scheduling.DealershipConfig
@@ -167,8 +168,8 @@ func (s *service) duplicate(ctx context.Context, a scheduling.Appointment) error
 
 // validate applies the rules that need no capacity read, in order: customer channels may not
 // book staff-only services, the start is on the grid, after now and inside the booking horizon.
-// A reschedule's new start follows the same rules (spec FR-011). It returns the plan with its
-// start and the runs the service type needs.
+// A reschedule's new start follows the same rules. It returns the plan with its start and the
+// runs the service type needs.
 func (s *service) validate(p plan) (plan, error) {
 	if p.channel.IsCustomer() && !p.req.OnlineBookable {
 		return plan{}, fmt.Errorf("%s: %w", p.req.Code, scheduling.ErrNotBookableOnline)
@@ -241,7 +242,7 @@ func (s *service) candidates(ctx context.Context, p plan) ([]scheduling.Candidat
 
 // checkPins refuses a named bay or technician that cannot do the job: unknown, inactive, or a bay
 // of a type the service does not allow is INVALID_VALUE naming the field; a technician without
-// the required skills on the day is NO_QUALIFIED_TECHNICIAN (spec FR-012).
+// the required skills on the day is NO_QUALIFIED_TECHNICIAN.
 func (p plan) checkPins(bays []scheduling.ServiceBay, techs []scheduling.Technician) error {
 	if p.pinBay != "" {
 		i := slices.IndexFunc(bays, func(b scheduling.ServiceBay) bool { return b.ID == p.pinBay })
@@ -426,8 +427,8 @@ func (s *service) availabilityChangedError(ctx context.Context, p plan) error {
 }
 
 // alternatives returns the nearest feasible starts for the same service type, freshly computed
-// over the requested local date and the next one (research R7), with the plan's owner cells
-// free and its named resources respected.
+// over the requested local date and the next one, with the plan's owner cells free and its named
+// resources respected.
 func (s *service) alternatives(ctx context.Context, p plan) ([]scheduling.Slot, error) {
 	first := p.cfg.Day(p.start)
 	var starts []time.Time
