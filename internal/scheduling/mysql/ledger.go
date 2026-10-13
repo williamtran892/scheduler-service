@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"scheduler/internal/scheduling"
@@ -20,9 +21,63 @@ func (tx *Tx) ClaimPair(dealershipID, bayID string, bayRun scheduling.CellRun,
 	return tx.claimRun(dealershipID, scheduling.ResourceTechnician, techID, techRun, appointmentID, scheduling.ErrTechnicianNotWorking)
 }
 
-// ReleaseCells frees every cell the appointment owns that keep does not keep (research R3).
+// ReleaseCells frees every cell the appointment owns that keep does not keep and returns how many
+// it freed (research R3). It locks the appointment's cells, filters them in Go with Keep.Keeps,
+// and frees the rest with one UPDATE per resource.
 func (tx *Tx) ReleaseCells(appointmentID string, keep scheduling.Keep) (int, error) {
-	panic("not implemented")
+	rows, err := tx.tx.QueryContext(tx.ctx, `
+		SELECT resource_kind, resource_id, slot_start
+		  FROM time_slot
+		 WHERE appointment_id = ?
+		 ORDER BY resource_kind, resource_id, slot_start
+		   FOR UPDATE`, appointmentID)
+	if err != nil {
+		return 0, fmt.Errorf("lock cells of appointment %s: %w", appointmentID, mapError(err))
+	}
+	defer rows.Close()
+
+	type resource struct {
+		kind scheduling.ResourceKind
+		id   string
+	}
+	var order []resource
+	released := map[resource][]time.Time{}
+	for rows.Next() {
+		var r resource
+		var start time.Time
+		if err := rows.Scan(&r.kind, &r.id, &start); err != nil {
+			return 0, fmt.Errorf("lock cells of appointment %s: %w", appointmentID, err)
+		}
+		if keep.Keeps(r.kind, r.id, start) {
+			continue
+		}
+		if _, seen := released[r]; !seen {
+			order = append(order, r)
+		}
+		released[r] = append(released[r], start)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("lock cells of appointment %s: %w", appointmentID, mapError(err))
+	}
+	// rows is exhausted, hence closed: the connection is free for the UPDATEs.
+
+	freed := 0
+	for _, r := range order {
+		starts := released[r]
+		args := []any{scheduling.CellFree, appointmentID, r.kind, r.id}
+		for _, s := range starts {
+			args = append(args, s)
+		}
+		_, err := tx.tx.ExecContext(tx.ctx, `
+			UPDATE time_slot SET status = ?, appointment_id = NULL, version = version + 1
+			 WHERE appointment_id = ? AND resource_kind = ? AND resource_id = ?
+			   AND slot_start IN (?`+strings.Repeat(", ?", len(starts)-1)+`)`, args...)
+		if err != nil {
+			return freed, fmt.Errorf("free %s %s cells of appointment %s: %w", r.kind, r.id, appointmentID, mapError(err))
+		}
+		freed += len(starts)
+	}
+	return freed, nil
 }
 
 // cell is one time_slot row as the claim reads it.
@@ -33,7 +88,8 @@ type cell struct {
 }
 
 // claimRun locks the cells of one run, checks in Go that every one exists and is FREE, then marks
-// them BOOKED. The locking read is a current read: two claimers of overlapping cells serialise on
+// them BOOKED. A cell the appointment already owns counts as free, so a reschedule can claim runs
+// that overlap its own cells (research R2). The locking read is a current read: two claimers of overlapping cells serialise on
 // the first shared row, and the loser sees BOOKED and stops before writing. Without FOR UPDATE a
 // read at REPEATABLE READ would see a snapshot and double book.
 func (tx *Tx) claimRun(dealershipID string, kind scheduling.ResourceKind, id string, run scheduling.CellRun,
@@ -58,7 +114,7 @@ func (tx *Tx) claimRun(dealershipID string, kind scheduling.ResourceKind, id str
 			kind, id, len(cells), run.Cells, run.First.UTC().Format(time.RFC3339), missing)
 	}
 	for _, c := range cells {
-		if c.status != scheduling.CellFree {
+		if c.status != scheduling.CellFree && c.appointmentID.String != appointmentID {
 			return fmt.Errorf("%s %s cell %s is booked by appointment %s: %w",
 				kind, id, c.start.UTC().Format(time.RFC3339), c.appointmentID.String, scheduling.ErrSlotTaken)
 		}
@@ -93,20 +149,22 @@ func scanCells(rows *sql.Rows) ([]cell, error) {
 // signature carries no grid, so it joins dealership.slot_minutes: the one column this package
 // reads from another domain's table, through time_slot's own foreign key.
 //
-// owner is not honoured yet (feature 002, research R4): its cells still count as booked.
+// The cells booked by owner count as free: they join the islands and are left out of the loads, so
+// a reschedule sees the appointment's own time as available (research R4). owner is "" for a new
+// booking, which no appointment id equals.
 func (s *Store) DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, scheduling.Loads, error) {
-	islands, err := s.islands(ctx, dealershipID, day)
+	islands, err := s.islands(ctx, dealershipID, day, owner)
 	if err != nil {
 		return nil, nil, fmt.Errorf("free runs of dealership %s on %s: %w", dealershipID, day.LocalDate, err)
 	}
-	loads, err := s.loads(ctx, dealershipID, day)
+	loads, err := s.loads(ctx, dealershipID, day, owner)
 	if err != nil {
 		return nil, nil, fmt.Errorf("booked cells of dealership %s on %s: %w", dealershipID, day.LocalDate, err)
 	}
 	return islands, loads, nil
 }
 
-func (s *Store) islands(ctx context.Context, dealershipID string, day scheduling.DayWindow) ([]scheduling.Island, error) {
+func (s *Store) islands(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		WITH free AS (
 		  SELECT ts.resource_kind, ts.resource_id, ts.slot_start, d.slot_minutes,
@@ -114,12 +172,13 @@ func (s *Store) islands(ctx context.Context, dealershipID string, day scheduling
 		             PARTITION BY ts.resource_kind, ts.resource_id ORDER BY ts.slot_start) MINUTE AS run
 		    FROM time_slot ts
 		    JOIN dealership d ON d.id = ts.dealership_id
-		   WHERE ts.dealership_id = ? AND ts.status = ? AND ts.slot_start >= ? AND ts.slot_start < ?)
+		   WHERE ts.dealership_id = ? AND (ts.status = ? OR ts.appointment_id = ?)
+		     AND ts.slot_start >= ? AND ts.slot_start < ?)
 		SELECT resource_kind, resource_id, MIN(slot_start), MAX(slot_start) + INTERVAL slot_minutes MINUTE
 		  FROM free
 		 GROUP BY resource_kind, resource_id, slot_minutes, run
 		 ORDER BY resource_kind, resource_id, MIN(slot_start)`,
-		dealershipID, scheduling.CellFree, day.From, day.To)
+		dealershipID, scheduling.CellFree, owner, day.From, day.To)
 	if err != nil {
 		return nil, err
 	}
@@ -136,12 +195,12 @@ func (s *Store) islands(ctx context.Context, dealershipID string, day scheduling
 	return islands, rows.Err()
 }
 
-func (s *Store) loads(ctx context.Context, dealershipID string, day scheduling.DayWindow) (scheduling.Loads, error) {
+func (s *Store) loads(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) (scheduling.Loads, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT resource_id, COUNT(*) FROM time_slot
-		 WHERE dealership_id = ? AND status = ? AND slot_start >= ? AND slot_start < ?
+		 WHERE dealership_id = ? AND status = ? AND appointment_id <> ? AND slot_start >= ? AND slot_start < ?
 		 GROUP BY resource_kind, resource_id`,
-		dealershipID, scheduling.CellBooked, day.From, day.To)
+		dealershipID, scheduling.CellBooked, owner, day.From, day.To)
 	if err != nil {
 		return nil, err
 	}
