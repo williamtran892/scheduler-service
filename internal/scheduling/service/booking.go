@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
-	"strings"
 	"time"
 
 	"scheduler/internal/platform"
@@ -13,9 +11,10 @@ import (
 	"scheduler/internal/scheduling/mysql"
 )
 
-// The booking flow is implemented here: checks in order, the booking-key lookups, candidate
-// selection and the one-transaction-per-pair loop (implementation notes 4.4). Reschedule and the
-// late arrival reuse its plan, checks, candidate search and claim loop (reschedule.go).
+// The booking flow is implemented here: checks in order, the booking-key lookups and the
+// one-transaction-per-pair loop (implementation notes 4.4); candidate selection is in
+// candidates.go. Reschedule and the late arrival reuse its plan, checks, candidate search and
+// claim loop (reschedule.go).
 
 const (
 	actorAnonymous  = "anonymous" // the audit actor until authentication exists
@@ -27,9 +26,10 @@ const (
 // plan is a request for cells on its way through the checks: the dealership, service type,
 // customer and vehicle it resolved to, the start it asked for, then the aligned start and the cell
 // runs it needs, and the one appointment id the whole request uses (it also seeds the tie
-// shuffle). A booking fills cmd. bays and techs are the day's active bays and technicians by id,
-// left there by the last candidates call: together with the rest they are everything an
-// attempt's record shows, so the record is built from the plan without reading again (record).
+// shuffle). A booking fills cmd. bays and techs are the bays and technicians eligible for the
+// request by id, left there by the last candidates call: together with the rest they are
+// everything an attempt's record shows, so the record is built from the plan without reading again
+// (record).
 // A reschedule or a late arrival moves an existing appointment instead: existingAppointmentID is
 // its id, whose cells count as free, and loadPeople reads its customer and vehicle;
 // requiredBayID and requiredTechnicianID are the resources a reschedule names; preferredPair is
@@ -52,7 +52,7 @@ type plan struct {
 	existingAppointmentID string
 	requiredBayID         string
 	requiredTechnicianID  string
-	preferredPair         scheduling.Candidate
+	preferredPair         candidate
 }
 
 // errNoPair and errCellsGone end claim: every pair was tried, or the ledger cells went missing
@@ -84,7 +84,7 @@ func (s *service) Book(ctx context.Context, cmd BookCommand) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	rec, err := s.claim(ctx, &p, pairs, func(pair scheduling.Candidate) (Record, error) {
+	rec, err := s.claim(ctx, &p, pairs, func(pair candidate) (Record, error) {
 		return s.attempt(ctx, p, pair)
 	})
 	switch {
@@ -222,56 +222,9 @@ func (p plan) outsideOpeningHours(run scheduling.CellRun) error {
 		scheduling.ErrOutsideOpeningHours)
 }
 
-// candidates returns the (bay, technician) pairs that can take the request's runs, least-loaded
-// first, with the plan's preferred pair ahead of them when it is one. It answers
-// NO_QUALIFIED_TECHNICIAN when nobody active holds the required skills on the local date, and
-// refuses the resources a reschedule names when they do not fit the service type. It leaves the
-// day's bays and technicians in the plan for the record of each attempt.
-func (s *service) candidates(ctx context.Context, p *plan) ([]scheduling.Candidate, error) {
-	day := p.cfg.Day(p.start)
-	bays, techs, err := s.workshop.Resources(ctx, p.cfg.DealershipID, day.LocalDate)
-	if err != nil {
-		return nil, err
-	}
-	p.keepResources(bays, techs)
-	if err := p.checkPins(bays, techs); err != nil {
-		return nil, err
-	}
-	if !slices.ContainsFunc(techs, func(t scheduling.Technician) bool { return t.HasAll(p.req.RequiredSkills) }) {
-		return nil, fmt.Errorf("no active technician at %s holds %s on %s: %w", p.cfg.Code,
-			strings.Join(p.req.RequiredSkills, ", "), day.LocalDate, scheduling.ErrNoQualifiedTechnician)
-	}
-	free, loads, err := s.store.RunAvailability(ctx, p.cfg.DealershipID, day, p.bay, p.tech, p.existingAppointmentID)
-	if err != nil {
-		return nil, err
-	}
-	bays, techs = p.restrict(bays, techs)
-	pairs := scheduling.CandidatePairs(p.req, bays, techs, free, loads, scheduling.SeedFrom(p.appointmentID))
-	if i := slices.IndexFunc(pairs, func(c scheduling.Candidate) bool {
-		return c.BayID == p.preferredPair.BayID && c.TechID == p.preferredPair.TechID
-	}); i > 0 {
-		preferred := pairs[i]
-		pairs = slices.Insert(slices.Delete(pairs, i, i+1), 0, preferred)
-	}
-	return pairs, nil
-}
-
-// keepResources puts the day's bays and technicians in the plan by id, replacing the ones a
-// previous candidates call left.
-func (p *plan) keepResources(bays []scheduling.ServiceBay, techs []scheduling.Technician) {
-	p.bays = make(map[string]scheduling.ServiceBay, len(bays))
-	for _, b := range bays {
-		p.bays[b.ID] = b
-	}
-	p.techs = make(map[string]scheduling.Technician, len(techs))
-	for _, t := range techs {
-		p.techs[t.ID] = t
-	}
-}
-
 // record is the record of appointment a, which owns cells, assembled in memory from what the plan
 // has read: the dealership, service type, customer and vehicle, and the bay and technician out of
-// the day's lists. Those lists hold every pair candidates returns, so a's pair is always in them.
+// the eligible lists. Those lists hold every pair candidates returns, so a's pair is always in them.
 // It reads nothing: the stored appointments of Get and load go through service.record.
 func (p plan) record(a scheduling.Appointment, cells scheduling.OwnedCells) Record {
 	return Record{
@@ -286,48 +239,14 @@ func (p plan) record(a scheduling.Appointment, cells scheduling.OwnedCells) Reco
 	}
 }
 
-// checkPins refuses a named bay or technician that cannot do the job: unknown, inactive, or a bay
-// of a type the service does not allow is INVALID_VALUE naming the field; a technician without
-// the required skills on the day is NO_QUALIFIED_TECHNICIAN.
-func (p plan) checkPins(bays []scheduling.ServiceBay, techs []scheduling.Technician) error {
-	if p.requiredBayID != "" {
-		i := slices.IndexFunc(bays, func(b scheduling.ServiceBay) bool { return b.ID == p.requiredBayID })
-		if i < 0 || !slices.Contains(p.req.AllowedBayTypes, bays[i].Type) {
-			return platform.InvalidValue("serviceBayId", "is not an active bay of this dealership of a type the service type allows")
-		}
-	}
-	if p.requiredTechnicianID != "" {
-		i := slices.IndexFunc(techs, func(t scheduling.Technician) bool { return t.ID == p.requiredTechnicianID })
-		if i < 0 {
-			return platform.InvalidValue("technicianId", "is not an active technician of this dealership")
-		}
-		if !techs[i].HasAll(p.req.RequiredSkills) {
-			return fmt.Errorf("technician %s does not hold %s on %s: %w", p.requiredTechnicianID,
-				strings.Join(p.req.RequiredSkills, ", "), p.cfg.Day(p.start).LocalDate, scheduling.ErrNoQualifiedTechnician)
-		}
-	}
-	return nil
-}
-
-// restrict keeps only the bay and the technician the plan names, when it names them.
-func (p plan) restrict(bays []scheduling.ServiceBay, techs []scheduling.Technician) ([]scheduling.ServiceBay, []scheduling.Technician) {
-	if p.requiredBayID != "" {
-		bays = slices.DeleteFunc(slices.Clone(bays), func(b scheduling.ServiceBay) bool { return b.ID != p.requiredBayID })
-	}
-	if p.requiredTechnicianID != "" {
-		techs = slices.DeleteFunc(slices.Clone(techs), func(t scheduling.Technician) bool { return t.ID != p.requiredTechnicianID })
-	}
-	return bays, techs
-}
-
 // claim tries the candidate pairs in order, one attempt (one transaction) each (notes 4.4). A pair
 // that was taken moves on to the next; a deadlock victim is retried once on the same pair;
 // missing cells recompute the candidates once and start again. It returns the record of the
 // first attempt that succeeds, errNoPair when no pair is left, errCellsGone when cells went
 // missing twice, and any other error an attempt returned (a duplicate booking key, a stale
 // version) unchanged.
-func (s *service) claim(ctx context.Context, p *plan, pairs []scheduling.Candidate,
-	attempt func(scheduling.Candidate) (Record, error)) (Record, error) {
+func (s *service) claim(ctx context.Context, p *plan, pairs []candidate,
+	attempt func(candidate) (Record, error)) (Record, error) {
 	remainingPairs := pairs
 	refreshed := false
 	for len(remainingPairs) > 0 {
@@ -362,7 +281,7 @@ func (s *service) claim(ctx context.Context, p *plan, pairs []scheduling.Candida
 // attempt is one booking transaction on one pair, in the statement order that is the
 // correctness argument: insert the appointment (its booking key is the idempotency guard), claim
 // the cells, append the audit event, append the outbox row.
-func (s *service) attempt(ctx context.Context, p plan, pair scheduling.Candidate) (Record, error) {
+func (s *service) attempt(ctx context.Context, p plan, pair candidate) (Record, error) {
 	a := s.newAppointment(p, pair)
 	cells := scheduling.OwnedCells{Bay: cellRange(p.bay), Technician: cellRange(p.tech)}
 	rec := p.record(a, cells) // everything the snapshots need, already read
@@ -390,7 +309,7 @@ func (s *service) attempt(ctx context.Context, p plan, pair scheduling.Candidate
 // are the customer's (start plus duration, no buffers); notes sent through a customer channel are
 // ignored; the timestamps are whole microseconds, as the database stores them, so the booking
 // response equals a later fetch.
-func (s *service) newAppointment(p plan, pair scheduling.Candidate) scheduling.Appointment {
+func (s *service) newAppointment(p plan, pair candidate) scheduling.Appointment {
 	notes := p.cmd.Notes
 	if p.cmd.Channel.IsCustomer() {
 		notes = ""

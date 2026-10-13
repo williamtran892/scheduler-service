@@ -54,7 +54,7 @@ func (s *service) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record
 		return Record{}, err
 	}
 
-	rec, err := s.claim(ctx, &p, pairs, func(pair scheduling.Candidate) (Record, error) {
+	rec, err := s.claim(ctx, &p, pairs, func(pair candidate) (Record, error) {
 		next := s.next(a, scheduling.StatusConfirmed)
 		next.StartAt, next.EndAt = p.start, p.start.Add(p.req.Duration)
 		next.ServiceBayID, next.TechnicianID = pair.BayID, pair.TechID
@@ -106,7 +106,7 @@ func (s *service) lateArrival(ctx context.Context, cmd TransitionCommand, a sche
 		return Record{}, err
 	}
 
-	rec, err := s.claim(ctx, &p, pairs, func(pair scheduling.Candidate) (Record, error) {
+	rec, err := s.claim(ctx, &p, pairs, func(pair candidate) (Record, error) {
 		next := s.next(a, scheduling.StatusCheckedIn)
 		next.StartAt, next.EndAt = p.start, p.start.Add(p.req.Duration)
 		next.ServiceBayID, next.TechnicianID = pair.BayID, pair.TechID
@@ -146,7 +146,7 @@ func (s *service) movePlan(ctx context.Context, a scheduling.Appointment, channe
 		cfg: cfg, req: req, channel: channel,
 		appointmentID:         a.ID,
 		existingAppointmentID: a.ID,
-		preferredPair:         scheduling.Candidate{BayID: a.ServiceBayID, TechID: a.TechnicianID},
+		preferredPair:         candidate{BayID: a.ServiceBayID, TechID: a.TechnicianID},
 	}, nil
 }
 

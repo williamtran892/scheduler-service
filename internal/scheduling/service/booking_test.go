@@ -78,7 +78,7 @@ func TestBook_ReplayOfTheSameRequestReturnsTheExistingAppointment(t *testing.T) 
 	}
 	f.owned["existing-1"] = owned
 	// The ledger is full: a replay must not depend on free capacity.
-	f.free = func(int) scheduling.Free { return nil }
+	f.free = func(int) map[string]bool { return nil }
 	cmd := booking()
 	cmd.CustomerRequests = scheduling.CustomerRequests{Notes: "Also check the wipers"}
 
@@ -256,7 +256,7 @@ func TestBook_NoQualifiedTechnician(t *testing.T) {
 func TestBook_NoCandidatePairIsSlotTaken(t *testing.T) {
 	f := newFixture(t)
 	// Priya, the only MOT tester, is busy 08:00Z to 08:45Z: the scan does not find her free.
-	f.free = func(int) scheduling.Free {
+	f.free = func(int) map[string]bool {
 		free := f.allFree()
 		delete(free, "priya")
 		return free
@@ -272,6 +272,26 @@ func TestBook_NoCandidatePairIsSlotTaken(t *testing.T) {
 	}
 	if f.lookups != 2 {
 		t.Errorf("booking key looked up %d times, want 2 (before capacity, then before answering SLOT_TAKEN)", f.lookups)
+	}
+}
+
+func TestBook_AsksTheStoreOnlyAboutTheEligibleResources(t *testing.T) {
+	f := newFixture(t)
+	f.loads = scheduling.Loads{"bay-2": 3, "priya": 1, "bay-1": 9, "sam": 9, "lee": 9}
+	f.expectTx(1)
+	run := cellRun(on("08:00"), 3)
+	gomock.InOrder(f.attempt("bay-2", "priya", run, run, nil)...)
+	cmd := booking()
+	cmd.ServiceTypeID = "mot" // the MOT bay, a technician who holds MOT_TESTER
+
+	if _, err := f.service().Book(ctx, cmd); err != nil {
+		t.Fatalf("Book: %v", err)
+	}
+	if !slices.Equal(f.askedBays[0], []string{"bay-2"}) || !slices.Equal(f.askedTechs[0], []string{"priya"}) {
+		t.Errorf("availability asked about bays %v and technicians %v, want only bay-2 and priya", f.askedBays, f.askedTechs)
+	}
+	if !slices.Equal(slices.Sorted(slices.Values(f.askedLoads[0])), []string{"bay-2", "priya"}) {
+		t.Errorf("load asked about %v, want only bay-2 and priya", f.askedLoads)
 	}
 }
 
@@ -421,7 +441,7 @@ func TestBook_MissingCellsRecomputeCandidatesOnce(t *testing.T) {
 	f := newFixture(t)
 	f.loads = distinctLoads
 	// After the first claim fails, the recomputed ledger no longer has Sam that day.
-	f.free = func(call int) scheduling.Free {
+	f.free = func(call int) map[string]bool {
 		free := f.allFree()
 		if call >= 2 {
 			delete(free, "sam")

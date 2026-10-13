@@ -119,14 +119,16 @@ type fixture struct {
 	bays         []scheduling.ServiceBay
 	techs        []scheduling.Technician
 
-	// free is the ledger the RunAvailability mock answers from: the ids of the resources that
-	// have no BOOKED cell in their run, given the number of the read, from 1 (the length of
-	// ledgerOwners). The mock also drops a resource whose run leaves the fixture's working time,
-	// 07:00Z to 17:00Z: the ledger has no cells there, so the scan does not find it free. loads
-	// is the BOOKED cells per resource that day.
-	free         func(call int) scheduling.Free
+	// free is the ledger the GetAvailableResources mock answers from: the ids of the resources
+	// that have no BOOKED cell in their run, given the number of the read, from 1. The mock also
+	// drops a resource whose run leaves the fixture's working time, 07:00Z to 17:00Z: the ledger
+	// has no cells there, so the query does not find it free. loads is the BOOKED cells per
+	// resource that day, which the GetResourceLoad mock answers from. ledgerOwners is the owner of
+	// each of the two reads, in order.
+	free         func(call int) map[string]bool
 	loads        scheduling.Loads
-	ledgerOwners []string // the owner of each ledger read, in order
+	ledgerOwners []string
+	reads        int // GetAvailableResources calls so far
 
 	// existing owns the booking key from the existingFrom-th lookup on (1-based); 0 never.
 	existing     scheduling.Appointment
@@ -137,7 +139,10 @@ type fixture struct {
 	owned  map[string]scheduling.OwnedCells
 	events map[string][]scheduling.Event
 
-	resourcesAsked []string // localDate of each Resources call
+	resourcesAsked []string   // localDate of each Resources call
+	askedBays      [][]string // the bay ids of each GetAvailableResources call
+	askedTechs     [][]string // the technician ids of each GetAvailableResources call
+	askedLoads     [][]string // the resource ids of each GetResourceLoad call
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -158,13 +163,13 @@ func newFixture(t *testing.T) *fixture {
 		owned:    map[string]scheduling.OwnedCells{},
 		events:   map[string][]scheduling.Event{},
 	}
-	f.free = func(int) scheduling.Free { return f.allFree() }
+	f.free = func(int) map[string]bool { return f.allFree() }
 	return f
 }
 
 // allFree is every bay and technician of the fixture.
-func (f *fixture) allFree() scheduling.Free {
-	free := scheduling.Free{}
+func (f *fixture) allFree() map[string]bool {
+	free := map[string]bool{}
 	for _, b := range f.bays {
 		free[b.ID] = true
 	}
@@ -249,22 +254,36 @@ func (f *fixture) service() Service {
 			return scheduling.Vehicle{}, notFound("vehicle", id)
 		})
 
-	f.store.EXPECT().RunAvailability(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
-		func(_ context.Context, _ string, _ scheduling.DayWindow, bayRun, techRun scheduling.CellRun, owner string) (scheduling.Free, scheduling.Loads, error) {
+	f.store.EXPECT().GetAvailableResources(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
+		func(_ context.Context, _ string, bayIDs []string, bayRun scheduling.CellRun, techIDs []string, techRun scheduling.CellRun, owner string) ([]string, []string, error) {
 			f.ledgerOwners = append(f.ledgerOwners, owner)
-			unbooked := f.free(len(f.ledgerOwners))
-			free := scheduling.Free{}
-			for _, b := range f.bays {
-				if unbooked[b.ID] && inWorkingTime(bayRun) {
-					free[b.ID] = true
+			f.askedBays, f.askedTechs = append(f.askedBays, bayIDs), append(f.askedTechs, techIDs)
+			f.reads++
+			unbooked := f.free(f.reads)
+			var bays, techs []string
+			for _, id := range bayIDs {
+				if unbooked[id] && inWorkingTime(bayRun) {
+					bays = append(bays, id)
 				}
 			}
-			for _, t := range f.techs {
-				if unbooked[t.ID] && inWorkingTime(techRun) {
-					free[t.ID] = true
+			for _, id := range techIDs {
+				if unbooked[id] && inWorkingTime(techRun) {
+					techs = append(techs, id)
 				}
 			}
-			return free, f.loads, nil
+			return bays, techs, nil
+		})
+	f.store.EXPECT().GetResourceLoad(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
+		func(_ context.Context, _ string, _ scheduling.DayWindow, resourceIDs []string, owner string) (scheduling.Loads, error) {
+			f.ledgerOwners = append(f.ledgerOwners, owner)
+			f.askedLoads = append(f.askedLoads, resourceIDs)
+			loads := scheduling.Loads{}
+			for _, id := range resourceIDs {
+				if n, ok := f.loads[id]; ok {
+					loads[id] = n
+				}
+			}
+			return loads, nil
 		})
 	f.store.EXPECT().WorkingCellCounts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
 		func(_ context.Context, _ string, bayRun, techRun scheduling.CellRun) (int, int, error) {

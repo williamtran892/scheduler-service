@@ -1,11 +1,10 @@
 // Package scheduling is the Scheduling domain root: the shared types of the domain, the ledger's
-// grid algebra, the candidate-pair search, and what Scheduling needs from other domains
-// (WorkshopReader, CustomerReader). Its data access, Store and Tx, is declared in
-// scheduling/mysql. It imports only the standard library (implementation notes 2).
+// grid algebra, and what Scheduling needs from other domains (WorkshopReader, CustomerReader).
+// Its data access, Store and Tx, is declared in scheduling/mysql. It imports only the standard
+// library (implementation notes 2).
 //
 // This file holds every shared struct and interface declaration; the methods and functions
-// that work on them stay with their algorithms in grid.go, availability.go, requirement.go and
-// appointment.go.
+// that work on them stay with their algorithms in grid.go, requirement.go and appointment.go.
 package scheduling
 
 import (
@@ -95,12 +94,8 @@ type Event struct {
 	Payload    json.RawMessage
 }
 
-// Free is the set of resource ids that are free for the whole run a request needs: the bays free
-// for every cell of the bay run, the technicians free for every cell of the technician run. A
-// cell is free when it is FREE or the appointment being moved owns it.
-type Free map[string]bool
-
-// Loads is the number of BOOKED cells per resource id on one local day.
+// Loads is the number of BOOKED cells per resource id on one local day. A resource with none is
+// absent, which reads as 0.
 type Loads map[string]int
 
 // ---- grid ----
@@ -164,14 +159,6 @@ type Technician struct {
 	ID     string
 	Name   string
 	Skills []string
-}
-
-// Candidate is a (bay, technician) pair that can take both runs at a start, with its load:
-// the bay's booked cells plus the technician's booked cells that day.
-type Candidate struct {
-	BayID  string
-	TechID string
-	Load   int
 }
 
 // ---- customers ----

@@ -567,7 +567,7 @@ func TestCheckIn_LateArrivalMovesToTheLeastLoadedPairWhenThePreviousOneIsTaken(t
 func TestCheckIn_LateArrivalWithNothingFreeIsSlotTaken(t *testing.T) {
 	tests := map[string]func(f *fixture){
 		"no free cells": func(f *fixture) {
-			f.free = func(int) scheduling.Free { return nil }
+			f.free = func(int) map[string]bool { return nil }
 		},
 		"nobody qualified on the day": func(f *fixture) {
 			f.techs = []scheduling.Technician{{ID: "trainee", Name: "Trainee"}}

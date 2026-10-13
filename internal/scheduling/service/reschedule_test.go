@@ -240,7 +240,7 @@ func TestReschedule_MissingCellsTwiceIsAvailabilityChanged(t *testing.T) {
 func TestReschedule_NoFreePairIsSlotTakenAndChangesNothing(t *testing.T) {
 	f := newFixture(t)
 	f.storedAt(scheduling.StatusConfirmed, 1)
-	f.free = func(int) scheduling.Free { return nil } // every resource is booked for 09:00Z to 09:45Z
+	f.free = func(int) map[string]bool { return nil } // every resource is booked for 09:00Z to 09:45Z
 
 	_, err := f.service().Reschedule(ctx, moveTo("09:00"))
 
