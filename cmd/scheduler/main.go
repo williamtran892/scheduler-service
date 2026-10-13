@@ -21,6 +21,7 @@ import (
 	"scheduler/internal/app"
 	customersmysql "scheduler/internal/customers/mysql"
 	"scheduler/internal/platform"
+	schedendpoint "scheduler/internal/scheduling/endpoint"
 	schedmysql "scheduler/internal/scheduling/mysql"
 	schedsvc "scheduler/internal/scheduling/service"
 	"scheduler/internal/scheduling/sweeper"
@@ -69,7 +70,7 @@ func run(logger log.Logger) error {
 	schedulingSvc := newSchedulingService(db, store, logger)
 	handler := app.NewHandler(app.Deps{
 		DB:         db,
-		Scheduling: schedsvc.MakeServerEndpoints(schedulingSvc),
+		Scheduling: schedendpoint.Specs(schedulingSvc),
 	})
 	srv := &http.Server{Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 

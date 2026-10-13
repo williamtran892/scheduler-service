@@ -12,7 +12,8 @@ The service is one binary, `cmd/scheduler`, and it runs in one mode:
 4. It wires the Scheduling service: the MySQL repositories (the Scheduling store, and the setup
    and customers repositories as its two readers), the real clock and id generator, and the
    logging, instrumenting and tracing middleware.
-5. It builds the HTTP handler (`app.NewHandler`) and serves it.
+5. It builds the HTTP handler (`app.NewHandler`) over the endpoint specs of the wrapped Scheduling
+   service (`endpoint.Specs`) and serves it.
 6. It builds the no-show sweeper over the same wrapped Scheduling service and the store, with the
    grace period and interval from the configuration, and starts its worker.
 
@@ -39,13 +40,14 @@ implements Scheduling's reader interfaces. The design behind the split is in
 | Package | Responsibility |
 |---|---|
 | `cmd/scheduler` | Wiring only. Chooses the real implementation of every dependency |
-| `internal/app` | `NewHandler`: the one mux, every route, the `otelhttp` wrapper |
+| `internal/app` | `NewHandler`: the one mux, `GET /healthz`, each domain's `EndpointSpec`s mounted through its `Register`, and the `otelhttp` wrapper |
 | `internal/platform` | Cross-cutting pieces: `Config`, `Clock` (`RealClock`, `FakeClock`), `IDs` (`UUIDs`), `OpenMySQL`, `EncodeError` and `Problem`, `Health`, `SetupOTel`. Imports no domain package |
 | `internal/setup/mysql` | Workshop Setup's `Repository`, which implements `scheduling.WorkshopReader` over `dealership`, `service_bay`, `technician`, `skill`, `technician_skill`, `service_type`, `service_type_bay_type`, `service_type_skill` and returns Scheduling's types. A service type and its skills and bay types are one query into a `ServiceRequirement`; only `ACTIVE` bays and technicians are listed, and a technician carries the skills valid on the date asked (`valid_from <= date`, `valid_to` null or `>= date`) |
 | `internal/customers/mysql` | Customer & Vehicle's `Repository`, which implements `scheduling.CustomerReader` over `customer` and `vehicle` and returns Scheduling's types |
 | `internal/scheduling` | Scheduling root, plain Go with no SQL or HTTP: the grid (`Grid` with `Align`, `Floor` and `Ceil`, `CellRun`), `ServiceRequirement` and its runs, `FeasibleStarts`, `CandidatePairs` and `NearestAlternatives`, `Appointment` and `BookingKey`, the enumerations and the appointment status transition table (`CanTransitionTo`), `Keep` (what a release leaves booked), the typed errors, and the interfaces `Store`, `Tx`, `WorkshopReader` and `CustomerReader` |
 | `internal/scheduling/mysql` | `Store` and `Tx` over `appointment`, `time_slot`, `appointment_event` and `outbox`; maps MySQL errors 1062 on `uq_appointment_booking` and 1213 to Scheduling's errors. `ClaimPair` and `ReleaseCells` in `ledger.go` are the only code that writes `time_slot` |
-| `internal/scheduling/service` | The go-kit service: `Service` (`Book`, `Get`, `Reschedule`, `Cancel`, `CheckIn`, `Start`, `Complete`, `MarkNoShow`), endpoints, HTTP transport (decoders, `RegisterRoutes`), the appointment view per channel, and the logging, instrumenting and tracing middleware |
+| `internal/scheduling/service` | The go-kit service, with no HTTP routes or decoders: `Service` (`Book`, `Get`, `Reschedule`, `Cancel`, `CheckIn`, `Start`, `Complete`, `MarkNoShow`), its commands and `Record`, the business code, the appointment view per channel (`NewAppointmentView`, also the outbox snapshot), and the logging, instrumenting and tracing middleware |
+| `internal/scheduling/endpoint` | Scheduling's HTTP surface, one file per operation (`book.go`, `get.go`, `reschedule.go`, `cancel.go`, `check_in.go`, `start.go`, `complete.go`, `no_show.go`). Each holds the go-kit endpoint (`Make<Operation>Endpoint`), the request decoder and the `EndpointSpec` constructor of its operation. `endpoint.go` has `EndpointSpec`, `Specs` and `Register`; `decode.go`, `encode.go` and `transition.go` hold what the operations share |
 | `internal/scheduling/sweeper` | The no-show sweeper: `Service.RunOnce` marks overdue appointments through the Scheduling service's own `MarkNoShow`, and `Worker` runs it on a ticker until its context ends |
 
 Dependency rules, each pinned by a test or a convention the reviewer checks:
@@ -60,6 +62,9 @@ Dependency rules, each pinned by a test or a convention the reviewer checks:
   joins `dealership.slot_minutes` in `DayLedger` and `OwnedCells`, because a cell's length is
   needed to tell consecutive cells from a gap and to end a cell range, and neither method's
   signature carries the grid.
+- `scheduling/endpoint` imports `scheduling/service`, `scheduling` and `platform`; `service` never
+  imports `endpoint`. A domain's HTTP code lives only in its `endpoint` package, and routes are
+  registered only by `endpoint.Register`, which `app.NewHandler` calls.
 - The sweeper sees the Scheduling service only through two one-method interfaces, `Appointments`
   (`DueNoShows`, implemented by the store) and `Marker` (`MarkNoShow`, implemented by the
   service), so it goes through the same middleware and the same transaction as staff.
@@ -80,6 +85,16 @@ Dependency rules, each pinned by a test or a convention the reviewer checks:
 | `POST /appointments/{appointmentId}/start` | Starts a `CHECKED_IN` appointment (`startAppointment`) |
 | `POST /appointments/{appointmentId}/complete` | Completes an `IN_PROGRESS` appointment (`completeAppointment`) |
 | `POST /appointments/{appointmentId}/no-show` | Marks a `CONFIRMED` appointment `NO_SHOW` (`markNoShow`) |
+
+Each route is one `EndpointSpec` in `internal/scheduling/endpoint`, and a spec has five fields:
+`HTTPMethod`, `PathTemplate` (an `http.ServeMux` pattern such as
+`/appointments/{appointmentId}/check-in`), `Endpoint` (the go-kit endpoint), `Decode` and `Encode`.
+The operation's file builds its spec (`Book`, `Get`, `Reschedule`, `Cancel`, `CheckIn`, `Start`,
+`Complete`, `NoShow`), `Specs(svc)` lists them all, and `Register(mux, specs, opts...)` mounts each
+as `kithttp.NewServer(spec.Endpoint, spec.Decode, spec.Encode, opts...)` at `HTTPMethod + " " +
+PathTemplate`. A new route is a new file, a new spec in `Specs`, and a row above. Business failures
+travel as the response's `Err` and are written by `platform.EncodeError`, as are the errors of a
+decoder, through the `kithttp.ServerErrorEncoder` that `app.NewHandler` passes to `Register`.
 
 Routes have no `/v1` prefix; the contract's `/v1` is read as a gateway base path. The other
 operations of the contract (listing, availability search, setup) are not served yet, and the mux
@@ -115,9 +130,9 @@ and completes, then render in the dealership's time zone like `startAt`.
 
 `Book` applies these checks in order and stops at the first that fails:
 
-1. The transport decodes the request: JSON shape, required fields, identifiers as UUIDs, `startAt`
-   with an offset (`400 VALIDATION_ERROR`), then `kind` and `X-Channel` values and text lengths
-   (`422 INVALID_VALUE`). The first problem found is the answer.
+1. The endpoint's decoder reads the request: JSON shape, required fields, identifiers as UUIDs,
+   `startAt` with an offset (`400 VALIDATION_ERROR`), then `kind` and `X-Channel` values and text
+   lengths (`422 INVALID_VALUE`). The first problem found is the answer.
 2. The dealership, service type, customer and vehicle must exist, share the dealership's tenant,
    the service type must be active, and the vehicle must belong to the customer
    (`422 INVALID_VALUE` naming the field).
@@ -195,7 +210,7 @@ status. `scheduling.AppointmentStatus.CanTransitionTo` is the one table (design 
 | `CHECKED_IN` | `CANCELLED` | cancel | release every owned cell |
 | `IN_PROGRESS` | `COMPLETED` | complete | release the owned cells that start at or after `Ceil(now)`; sets `actual_end_at` |
 
-Each method checks in this order and stops at the first failure: the transport's decoding (`400`
+Each method checks in this order and stops at the first failure: the endpoint's decoding (`400`
 and `422`); the channel may take the action (`403`, before anything is read); the appointment
 exists (`404`); a cancel of a `CANCELLED` appointment returns it unchanged, whatever
 `expectedVersion` says, because a retried cancel carries the version it was first sent with;

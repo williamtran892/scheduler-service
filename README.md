@@ -133,13 +133,14 @@ creates tables.
 
 ```
 cmd/scheduler/          main: config, logger, OTel, MySQL pool, HTTP server and no-show sweeper in an errgroup
-internal/app/           NewHandler: the one place routes are registered
+internal/app/           NewHandler: the one mux, with each domain's endpoint specs mounted on it
 internal/platform/      config, clock, ids, MySQL pool, problem-details encoder, health, OTel
 internal/setup/         Workshop Setup (read-only): mysql implements scheduling.WorkshopReader over
                         dealerships, bays, technicians, service types
 internal/customers/     Customer & Vehicle (read-only): mysql implements scheduling.CustomerReader
 internal/scheduling/    Scheduling: grid and availability, the claim and release, appointments and
-                        their lifecycle (root, mysql, service, sweeper)
+                        their lifecycle (root, mysql, service, endpoint, sweeper); endpoint is the
+                        HTTP surface, one file per operation
 local/mysql/            schema.sql and data.sql, the compose init scripts
 features/               Gherkin feature files
 test/acceptance/        godog suite: a black-box HTTP client with relative dates and fixture names;

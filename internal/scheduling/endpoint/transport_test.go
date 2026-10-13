@@ -1,4 +1,4 @@
-package service
+package endpoint
 
 import (
 	"encoding/json"
@@ -15,6 +15,7 @@ import (
 
 	"scheduler/internal/platform"
 	"scheduler/internal/scheduling"
+	"scheduler/internal/scheduling/service"
 )
 
 const (
@@ -30,7 +31,7 @@ func server(t *testing.T) (*MockService, *httptest.Server) {
 	t.Helper()
 	svc := NewMockService(gomock.NewController(t))
 	mux := http.NewServeMux()
-	RegisterRoutes(mux, MakeServerEndpoints(svc), kithttp.ServerErrorEncoder(platform.EncodeError))
+	Register(mux, Specs(svc), kithttp.ServerErrorEncoder(platform.EncodeError))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return svc, srv
@@ -74,7 +75,7 @@ func send(t *testing.T, srv *httptest.Server, method, path string, body any, cha
 	return resp, m
 }
 
-func recordFor(id string) Record {
+func recordFor(id string) service.Record {
 	r := evRecord()
 	r.Appointment.ID = id
 	return r
@@ -82,8 +83,8 @@ func recordFor(id string) Record {
 
 func TestTransport_BookIs201WithLocationAndTheRecord(t *testing.T) {
 	svc, srv := server(t)
-	var got BookCommand
-	svc.EXPECT().Book(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, cmd BookCommand) (Record, error) {
+	var got service.BookCommand
+	svc.EXPECT().Book(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, cmd service.BookCommand) (service.Record, error) {
 		got = cmd
 		return recordFor(appointmentUUID), nil
 	})
@@ -104,7 +105,7 @@ func TestTransport_BookIs201WithLocationAndTheRecord(t *testing.T) {
 		t.Errorf("body = %v, want the staff view of the record", body)
 	}
 	yes := true
-	want := BookCommand{DealershipID: dealershipUUID, ServiceTypeID: serviceUUID, CustomerID: customerUUID, VehicleID: vehicleUUID,
+	want := service.BookCommand{DealershipID: dealershipUUID, ServiceTypeID: serviceUUID, CustomerID: customerUUID, VehicleID: vehicleUUID,
 		Kind: scheduling.KindDropOff, Channel: scheduling.ChannelAdvisorConsole, Notes: "Customer prefers a morning call when ready.",
 		CustomerRequests: scheduling.CustomerRequests{CourtesyCar: &yes, Notes: "Charging port cover loose"}}
 	if !got.StartAt.Equal(time.Date(2026, 10, 20, 8, 0, 0, 0, time.UTC)) {
@@ -216,7 +217,7 @@ func TestTransport_BookServiceErrorsBecomeProblems(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc, srv := server(t)
-			svc.EXPECT().Book(gomock.Any(), gomock.Any()).Return(Record{}, tt.err)
+			svc.EXPECT().Book(gomock.Any(), gomock.Any()).Return(service.Record{}, tt.err)
 
 			resp, body := send(t, srv, http.MethodPost, "/appointments", validBody(), "ADVISOR_CONSOLE")
 			defer resp.Body.Close()
@@ -234,9 +235,9 @@ func TestTransport_BookServiceErrorsBecomeProblems(t *testing.T) {
 func TestTransport_GetReturnsTheRecordForTheChannel(t *testing.T) {
 	svc, srv := server(t)
 	gomock.InOrder(
-		svc.EXPECT().Get(gomock.Any(), GetQuery{AppointmentID: appointmentUUID}).Return(recordFor(appointmentUUID), nil),
-		svc.EXPECT().Get(gomock.Any(), GetQuery{AppointmentID: appointmentUUID, IncludeEvents: true}).Return(recordFor(appointmentUUID), nil),
-		svc.EXPECT().Get(gomock.Any(), GetQuery{AppointmentID: appointmentUUID}).Return(recordFor(appointmentUUID), nil),
+		svc.EXPECT().Get(gomock.Any(), service.GetQuery{AppointmentID: appointmentUUID}).Return(recordFor(appointmentUUID), nil),
+		svc.EXPECT().Get(gomock.Any(), service.GetQuery{AppointmentID: appointmentUUID, IncludeEvents: true}).Return(recordFor(appointmentUUID), nil),
+		svc.EXPECT().Get(gomock.Any(), service.GetQuery{AppointmentID: appointmentUUID}).Return(recordFor(appointmentUUID), nil),
 	)
 
 	resp, body := send(t, srv, http.MethodGet, "/appointments/"+appointmentUUID, nil, "ADVISOR_CONSOLE")
@@ -259,7 +260,7 @@ func TestTransport_GetReturnsTheRecordForTheChannel(t *testing.T) {
 func TestTransport_GetFailures(t *testing.T) {
 	t.Run("unknown appointment is 404", func(t *testing.T) {
 		svc, srv := server(t)
-		svc.EXPECT().Get(gomock.Any(), gomock.Any()).Return(Record{}, scheduling.ErrNotFound)
+		svc.EXPECT().Get(gomock.Any(), gomock.Any()).Return(service.Record{}, scheduling.ErrNotFound)
 		resp, body := send(t, srv, http.MethodGet, "/appointments/"+appointmentUUID, nil, "ADVISOR_CONSOLE")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound || body["code"] != "NOT_FOUND" {
@@ -304,7 +305,7 @@ func lifecyclePath(operation string) string {
 }
 
 func TestTransport_LifecycleRoutesDecodeTheirCommand(t *testing.T) {
-	base := TransitionCommand{AppointmentID: appointmentUUID, ExpectedVersion: 2, Reason: "Customer asked",
+	base := service.TransitionCommand{AppointmentID: appointmentUUID, ExpectedVersion: 2, Reason: "Customer asked",
 		Channel: scheduling.ChannelAdvisorConsole}
 	at := func(s string) time.Time { v, _ := time.Parse(time.RFC3339, s); return v }
 	tests := []struct {
@@ -315,14 +316,14 @@ func TestTransport_LifecycleRoutesDecodeTheirCommand(t *testing.T) {
 	}{
 		{"cancel", map[string]any{"expectedVersion": 2, "reason": "Customer asked"},
 			func(s *MockService, got *any) {
-				s.EXPECT().Cancel(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, c TransitionCommand) (Record, error) {
+				s.EXPECT().Cancel(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, c service.TransitionCommand) (service.Record, error) {
 					*got = c
 					return recordFor(appointmentUUID), nil
 				})
 			}, base},
 		{"no-show", map[string]any{"expectedVersion": 2, "reason": "Customer asked"},
 			func(s *MockService, got *any) {
-				s.EXPECT().MarkNoShow(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, c TransitionCommand) (Record, error) {
+				s.EXPECT().MarkNoShow(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, c service.TransitionCommand) (service.Record, error) {
 					*got = c
 					return recordFor(appointmentUUID), nil
 				})
@@ -330,34 +331,34 @@ func TestTransport_LifecycleRoutesDecodeTheirCommand(t *testing.T) {
 		{"check-in", map[string]any{"expectedVersion": 2, "reason": "Customer asked", "mileage": 41230,
 			"additionalConcerns": "Intermittent warning light on cold start"},
 			func(s *MockService, got *any) {
-				s.EXPECT().CheckIn(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, c CheckInCommand) (Record, error) {
+				s.EXPECT().CheckIn(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, c service.CheckInCommand) (service.Record, error) {
 					*got = c
 					return recordFor(appointmentUUID), nil
 				})
-			}, CheckInCommand{TransitionCommand: base, Mileage: func() *int { m := 41230; return &m }(),
+			}, service.CheckInCommand{TransitionCommand: base, Mileage: func() *int { m := 41230; return &m }(),
 				AdditionalConcerns: "Intermittent warning light on cold start"}},
 		{"start", map[string]any{"expectedVersion": 2, "reason": "Customer asked", "startedAt": "2026-10-20T09:05:00+01:00"},
 			func(s *MockService, got *any) {
-				s.EXPECT().Start(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, c StartCommand) (Record, error) {
+				s.EXPECT().Start(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, c service.StartCommand) (service.Record, error) {
 					*got = c
 					return recordFor(appointmentUUID), nil
 				})
-			}, StartCommand{TransitionCommand: base, StartedAt: func() *time.Time { v := at("2026-10-20T08:05:00Z"); return &v }()}},
+			}, service.StartCommand{TransitionCommand: base, StartedAt: func() *time.Time { v := at("2026-10-20T08:05:00Z"); return &v }()}},
 		{"complete", map[string]any{"expectedVersion": 2, "reason": "Customer asked", "completedAt": "2026-10-20T10:50:00+01:00"},
 			func(s *MockService, got *any) {
-				s.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, c CompleteCommand) (Record, error) {
+				s.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, c service.CompleteCommand) (service.Record, error) {
 					*got = c
 					return recordFor(appointmentUUID), nil
 				})
-			}, CompleteCommand{TransitionCommand: base, CompletedAt: func() *time.Time { v := at("2026-10-20T09:50:00Z"); return &v }()}},
+			}, service.CompleteCommand{TransitionCommand: base, CompletedAt: func() *time.Time { v := at("2026-10-20T09:50:00Z"); return &v }()}},
 		{"reschedule", map[string]any{"expectedVersion": 2, "reason": "Customer asked", "startAt": "2026-10-20T09:30:00+01:00",
 			"technicianId": technicianUUID, "serviceBayId": bayUUID},
 			func(s *MockService, got *any) {
-				s.EXPECT().Reschedule(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, c RescheduleCommand) (Record, error) {
+				s.EXPECT().Reschedule(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, c service.RescheduleCommand) (service.Record, error) {
 					*got = c
 					return recordFor(appointmentUUID), nil
 				})
-			}, RescheduleCommand{TransitionCommand: base, StartAt: func() *time.Time { v := at("2026-10-20T08:30:00Z"); return &v }(),
+			}, service.RescheduleCommand{TransitionCommand: base, StartAt: func() *time.Time { v := at("2026-10-20T08:30:00Z"); return &v }(),
 				TechnicianID: technicianUUID, ServiceBayID: bayUUID}},
 	}
 	for _, tt := range tests {
@@ -384,20 +385,20 @@ func sameCommand(got, want any) bool {
 	sameTime := func(a, b *time.Time) bool { return (a == nil && b == nil) || (a != nil && b != nil && a.Equal(*b)) }
 	sameInt := func(a, b *int) bool { return (a == nil && b == nil) || (a != nil && b != nil && *a == *b) }
 	switch w := want.(type) {
-	case TransitionCommand:
-		g, ok := got.(TransitionCommand)
+	case service.TransitionCommand:
+		g, ok := got.(service.TransitionCommand)
 		return ok && g == w
-	case CheckInCommand:
-		g, ok := got.(CheckInCommand)
+	case service.CheckInCommand:
+		g, ok := got.(service.CheckInCommand)
 		return ok && g.TransitionCommand == w.TransitionCommand && sameInt(g.Mileage, w.Mileage) && g.AdditionalConcerns == w.AdditionalConcerns
-	case StartCommand:
-		g, ok := got.(StartCommand)
+	case service.StartCommand:
+		g, ok := got.(service.StartCommand)
 		return ok && g.TransitionCommand == w.TransitionCommand && sameTime(g.StartedAt, w.StartedAt)
-	case CompleteCommand:
-		g, ok := got.(CompleteCommand)
+	case service.CompleteCommand:
+		g, ok := got.(service.CompleteCommand)
 		return ok && g.TransitionCommand == w.TransitionCommand && sameTime(g.CompletedAt, w.CompletedAt)
-	case RescheduleCommand:
-		g, ok := got.(RescheduleCommand)
+	case service.RescheduleCommand:
+		g, ok := got.(service.RescheduleCommand)
 		return ok && g.TransitionCommand == w.TransitionCommand && sameTime(g.StartAt, w.StartAt) &&
 			g.TechnicianID == w.TechnicianID && g.ServiceBayID == w.ServiceBayID
 	}
@@ -500,7 +501,7 @@ func TestTransport_LifecycleServiceErrorsBecomeProblems(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc, srv := server(t)
-			svc.EXPECT().CheckIn(gomock.Any(), gomock.Any()).Return(Record{}, tt.err)
+			svc.EXPECT().CheckIn(gomock.Any(), gomock.Any()).Return(service.Record{}, tt.err)
 
 			resp, body := send(t, srv, http.MethodPost, lifecyclePath("check-in"), map[string]any{"expectedVersion": 1}, "ADVISOR_CONSOLE")
 			defer resp.Body.Close()
@@ -512,7 +513,7 @@ func TestTransport_LifecycleServiceErrorsBecomeProblems(t *testing.T) {
 	}
 	t.Run("the version conflict states both versions", func(t *testing.T) {
 		svc, srv := server(t)
-		svc.EXPECT().Start(gomock.Any(), gomock.Any()).Return(Record{}, &scheduling.VersionConflictError{Current: 3, Sent: 2})
+		svc.EXPECT().Start(gomock.Any(), gomock.Any()).Return(service.Record{}, &scheduling.VersionConflictError{Current: 3, Sent: 2})
 
 		resp, body := send(t, srv, http.MethodPost, lifecyclePath("start"), map[string]any{"expectedVersion": 2}, "ADVISOR_CONSOLE")
 		defer resp.Body.Close()

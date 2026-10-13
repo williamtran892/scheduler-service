@@ -1,5 +1,6 @@
-// Package service is the Scheduling service (go-kit): the Service interface, its endpoints,
-// its HTTP transport and its middleware (implementation notes 4.0).
+// Package service is the Scheduling service (go-kit): the Service interface, its commands and
+// Record, its business code and its middleware (implementation notes 4.0). Its HTTP surface is
+// the endpoint package.
 package service
 
 import (
