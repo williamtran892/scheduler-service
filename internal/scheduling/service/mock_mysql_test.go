@@ -75,13 +75,12 @@ func (mr *MockStoreMockRecorder) AppointmentByBookingKey(ctx, key any) *gomock.C
 }
 
 // DayLedger mocks base method.
-func (m *MockStore) DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, scheduling.Loads, error) {
+func (m *MockStore) DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DayLedger", ctx, dealershipID, day, owner)
 	ret0, _ := ret[0].([]scheduling.Island)
-	ret1, _ := ret[1].(scheduling.Loads)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // DayLedger indicates an expected call of DayLedger.
@@ -147,6 +146,22 @@ func (m *MockStore) OwnedCells(ctx context.Context, appointmentID string) (sched
 func (mr *MockStoreMockRecorder) OwnedCells(ctx, appointmentID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OwnedCells", reflect.TypeOf((*MockStore)(nil).OwnedCells), ctx, appointmentID)
+}
+
+// RunAvailability mocks base method.
+func (m *MockStore) RunAvailability(ctx context.Context, dealershipID string, day scheduling.DayWindow, bayRun, techRun scheduling.CellRun, owner string) (scheduling.Free, scheduling.Loads, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RunAvailability", ctx, dealershipID, day, bayRun, techRun, owner)
+	ret0, _ := ret[0].(scheduling.Free)
+	ret1, _ := ret[1].(scheduling.Loads)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// RunAvailability indicates an expected call of RunAvailability.
+func (mr *MockStoreMockRecorder) RunAvailability(ctx, dealershipID, day, bayRun, techRun, owner any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunAvailability", reflect.TypeOf((*MockStore)(nil).RunAvailability), ctx, dealershipID, day, bayRun, techRun, owner)
 }
 
 // WorkingCellCounts mocks base method.

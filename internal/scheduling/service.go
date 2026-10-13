@@ -102,6 +102,11 @@ type Island struct {
 	From, To   time.Time
 }
 
+// Free is the set of resource ids that are free for the whole run a request needs: the bays free
+// for every cell of the bay run, the technicians free for every cell of the technician run. A
+// cell is free when it is FREE or the appointment being moved owns it.
+type Free map[string]bool
+
 // Loads is the number of BOOKED cells per resource id on one local day.
 type Loads map[string]int
 

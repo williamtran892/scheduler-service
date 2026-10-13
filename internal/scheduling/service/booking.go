@@ -243,12 +243,12 @@ func (s *service) candidates(ctx context.Context, p *plan) ([]scheduling.Candida
 		return nil, fmt.Errorf("no active technician at %s holds %s on %s: %w", p.cfg.Code,
 			strings.Join(p.req.RequiredSkills, ", "), day.LocalDate, scheduling.ErrNoQualifiedTechnician)
 	}
-	islands, loads, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day, p.existingAppointmentID)
+	free, loads, err := s.store.RunAvailability(ctx, p.cfg.DealershipID, day, p.bay, p.tech, p.existingAppointmentID)
 	if err != nil {
 		return nil, err
 	}
 	bays, techs = p.restrict(bays, techs)
-	pairs := scheduling.CandidatePairs(p.start, p.cfg.Grid, p.req, bays, techs, islands, loads, scheduling.SeedFrom(p.appointmentID))
+	pairs := scheduling.CandidatePairs(p.req, bays, techs, free, loads, scheduling.SeedFrom(p.appointmentID))
 	if i := slices.IndexFunc(pairs, func(c scheduling.Candidate) bool {
 		return c.BayID == p.preferredPair.BayID && c.TechID == p.preferredPair.TechID
 	}); i > 0 {
@@ -485,7 +485,7 @@ func (s *service) alternatives(ctx context.Context, p plan) ([]scheduling.Slot, 
 		if err != nil {
 			return nil, err
 		}
-		islands, _, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day, p.existingAppointmentID)
+		islands, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day, p.existingAppointmentID)
 		if err != nil {
 			return nil, err
 		}

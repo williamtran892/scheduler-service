@@ -15,21 +15,25 @@ func FeasibleStarts(day DayWindow, g Grid, req ServiceRequirement, bays []Servic
 	var starts []time.Time
 	for s := g.Ceil(day.From); s.Before(day.To); s = s.Add(g.Slot()) {
 		bayRun, techRun := req.Runs(s, g)
-		if len(freeBays(bayRun, req, bays, islands)) > 0 && len(freeTechnicians(techRun, req, techs, islands)) > 0 {
+		bayFree := func(id string) bool { return holds(islands, ResourceBay, id, bayRun) }
+		techFree := func(id string) bool { return holds(islands, ResourceTechnician, id, techRun) }
+		if len(freeBays(req, bays, bayFree)) > 0 && len(freeTechnicians(req, techs, techFree)) > 0 {
 			starts = append(starts, s)
 		}
 	}
 	return starts
 }
 
-// CandidatePairs returns the pairs that can take start, least-loaded first, with pairs of equal
-// load shuffled by seed (design 5.2).
-func CandidatePairs(start time.Time, g Grid, req ServiceRequirement, bays []ServiceBay, techs []Technician,
-	islands []Island, loads Loads, seed uint64) []Candidate {
-	bayRun, techRun := req.Runs(start, g)
+// CandidatePairs returns the pairs of a bay and a technician that can take the request, least-loaded
+// first, with pairs of equal load shuffled by seed (design 5.2). free holds the resources that are
+// free for the whole of their run, which the ledger's scan decides, so a run that is free partly on
+// one bay and partly on another makes neither bay a candidate.
+func CandidatePairs(req ServiceRequirement, bays []ServiceBay, techs []Technician, free Free, loads Loads, seed uint64) []Candidate {
+	isFree := func(id string) bool { return free[id] }
+	techIDs := freeTechnicians(req, techs, isFree)
 	var pairs []Candidate
-	for _, bayID := range freeBays(bayRun, req, bays, islands) {
-		for _, techID := range freeTechnicians(techRun, req, techs, islands) {
+	for _, bayID := range freeBays(req, bays, isFree) {
+		for _, techID := range techIDs {
 			pairs = append(pairs, Candidate{BayID: bayID, TechID: techID, Load: loads[bayID] + loads[techID]})
 		}
 	}
@@ -52,23 +56,23 @@ func CandidatePairs(start time.Time, g Grid, req ServiceRequirement, bays []Serv
 	return pairs
 }
 
-// freeBays returns the ids of the bays of an allowed type whose own island contains run.
-func freeBays(run CellRun, req ServiceRequirement, bays []ServiceBay, islands []Island) []string {
+// freeBays returns the ids of the bays of an allowed type for which isFree reports true.
+func freeBays(req ServiceRequirement, bays []ServiceBay, isFree func(id string) bool) []string {
 	var ids []string
 	for _, b := range bays {
-		if slices.Contains(req.AllowedBayTypes, b.Type) && holds(islands, ResourceBay, b.ID, run) {
+		if slices.Contains(req.AllowedBayTypes, b.Type) && isFree(b.ID) {
 			ids = append(ids, b.ID)
 		}
 	}
 	return ids
 }
 
-// freeTechnicians returns the ids of the technicians holding every required skill whose own
-// island contains run.
-func freeTechnicians(run CellRun, req ServiceRequirement, techs []Technician, islands []Island) []string {
+// freeTechnicians returns the ids of the technicians holding every required skill for which
+// isFree reports true.
+func freeTechnicians(req ServiceRequirement, techs []Technician, isFree func(id string) bool) []string {
 	var ids []string
 	for _, t := range techs {
-		if t.HasAll(req.RequiredSkills) && holds(islands, ResourceTechnician, t.ID, run) {
+		if t.HasAll(req.RequiredSkills) && isFree(t.ID) {
 			ids = append(ids, t.ID)
 		}
 	}

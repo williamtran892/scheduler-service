@@ -119,11 +119,13 @@ type fixture struct {
 	bays         []scheduling.ServiceBay
 	techs        []scheduling.Technician
 
-	// islands answers DayLedger; call counts the calls for that local date, from 1.
+	// islands is the ledger the mocks answer from, DayLedger with the islands themselves and
+	// RunAvailability with the resources whose island holds the run; call counts the ledger
+	// reads for that local date, from 1.
 	islands      func(day scheduling.DayWindow, call int) []scheduling.Island
 	loads        scheduling.Loads
 	ledgerCalls  map[string]int
-	ledgerOwners []string // the owner of each DayLedger call, in order
+	ledgerOwners []string // the owner of each ledger read, in order
 
 	// existing owns the booking key from the existingFrom-th lookup on (1-based); 0 never.
 	existing     scheduling.Appointment
@@ -249,10 +251,27 @@ func (f *fixture) service() Service {
 		})
 
 	f.store.EXPECT().DayLedger(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
-		func(_ context.Context, _ string, day scheduling.DayWindow, owner string) ([]scheduling.Island, scheduling.Loads, error) {
+		func(_ context.Context, _ string, day scheduling.DayWindow, owner string) ([]scheduling.Island, error) {
 			f.ledgerCalls[day.LocalDate]++
 			f.ledgerOwners = append(f.ledgerOwners, owner)
-			return f.islands(day, f.ledgerCalls[day.LocalDate]), f.loads, nil
+			return f.islands(day, f.ledgerCalls[day.LocalDate]), nil
+		})
+	f.store.EXPECT().RunAvailability(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
+		func(_ context.Context, _ string, day scheduling.DayWindow, bayRun, techRun scheduling.CellRun, owner string) (scheduling.Free, scheduling.Loads, error) {
+			f.ledgerCalls[day.LocalDate]++
+			f.ledgerOwners = append(f.ledgerOwners, owner)
+			// the resources whose island holds the whole run, as the ledger scan reports them
+			free := scheduling.Free{}
+			for _, i := range f.islands(day, f.ledgerCalls[day.LocalDate]) {
+				run := bayRun
+				if i.Kind == scheduling.ResourceTechnician {
+					run = techRun
+				}
+				if run.Within(i) {
+					free[i.ResourceID] = true
+				}
+			}
+			return free, f.loads, nil
 		})
 	f.store.EXPECT().WorkingCellCounts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
 		func(_ context.Context, _ string, bayRun, techRun scheduling.CellRun) (int, int, error) {

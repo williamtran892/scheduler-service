@@ -44,7 +44,7 @@ implements Scheduling's reader interfaces. The design behind the split is in
 | `internal/platform` | Cross-cutting pieces: `Config`, `Clock` (`RealClock`, `FakeClock`), `IDs` (`UUIDs`), `OpenMySQL`, `EncodeError` and `Problem`, `Health`, `SetupOTel`. Imports no domain package |
 | `internal/setup/mysql` | Workshop Setup's `Repository`, which implements `scheduling.WorkshopReader` over `dealership`, `service_bay`, `technician`, `skill`, `technician_skill`, `service_type`, `service_type_bay_type`, `service_type_skill` and returns Scheduling's types. A service type and its skills and bay types are one query into a `ServiceRequirement`; only `ACTIVE` bays and technicians are listed, and a technician carries the skills valid on the date asked (`valid_from <= date`, `valid_to` null or `>= date`) |
 | `internal/customers/mysql` | Customer & Vehicle's `Repository`, which implements `scheduling.CustomerReader` over `customer` and `vehicle` and returns Scheduling's types |
-| `internal/scheduling` | Scheduling root, plain Go with no SQL or HTTP. `service.go` declares every shared struct and interface in one place, in sections: the appointment and ledger types (`Appointment`, `BookingKey`, `CustomerRequests`, `Event`, `CellRange`, `OwnedCells`, `ResourceRun`, `Keep`, `Island`, `Loads`), the grid (`Grid`, `CellRun`, `Slot`), the requirement and resources (`ServiceRequirement`, `DealershipConfig`, `DayWindow`, `ServiceBay`, `Technician`, `Candidate`), the customers (`Customer`, `Vehicle`) and the readers (`WorkshopReader`, `CustomerReader`). The methods and functions stay with their algorithms: `grid.go` (`Align`, `Floor`, `Ceil`, `CellsFor`, and `CellRun`'s `Last`, `End` and `Within`), `availability.go` (`FeasibleStarts`, `CandidatePairs`, `NearestAlternatives`, `SeedFrom`), `requirement.go` (`ServiceRequirement.Runs`, `DealershipConfig.Day`, `Technician.HasAll`), `appointment.go` (`Appointment.Key`, `Keep.Keeps`), `enums.go` (the enumerations and the appointment status transition table, `CanTransitionTo`) and `errors.go` (the typed errors) |
+| `internal/scheduling` | Scheduling root, plain Go with no SQL or HTTP. `service.go` declares every shared struct and interface in one place, in sections: the appointment and ledger types (`Appointment`, `BookingKey`, `CustomerRequests`, `Event`, `CellRange`, `OwnedCells`, `ResourceRun`, `Keep`, `Island`, `Free`, `Loads`), the grid (`Grid`, `CellRun`, `Slot`), the requirement and resources (`ServiceRequirement`, `DealershipConfig`, `DayWindow`, `ServiceBay`, `Technician`, `Candidate`), the customers (`Customer`, `Vehicle`) and the readers (`WorkshopReader`, `CustomerReader`). The methods and functions stay with their algorithms: `grid.go` (`Align`, `Floor`, `Ceil`, `CellsFor`, and `CellRun`'s `Last`, `End` and `Within`), `availability.go` (`FeasibleStarts`, `CandidatePairs`, `NearestAlternatives`, `SeedFrom`), `requirement.go` (`ServiceRequirement.Runs`, `DealershipConfig.Day`, `Technician.HasAll`), `appointment.go` (`Appointment.Key`, `Keep.Keeps`), `enums.go` (the enumerations and the appointment status transition table, `CanTransitionTo`) and `errors.go` (the typed errors) |
 | `internal/scheduling/mysql` | Scheduling's own data access. `store.go` declares the interfaces `Store` and `Tx`; `db.go` has their implementation, the unexported types `store` and `tx` behind `New(db) Store`, over `appointment`, `time_slot`, `appointment_event` and `outbox`. It maps MySQL errors 1062 on `uq_appointment_booking` and 1213 to Scheduling's errors. `ClaimPair` and `ReleaseCells` in `ledger.go` are the only code that writes `time_slot` |
 | `internal/scheduling/service` | The go-kit service, with no HTTP routes or decoders: `Service` (`Book`, `Get`, `Reschedule`, `Cancel`, `CheckIn`, `Start`, `Complete`, `MarkNoShow`), its commands and `Record`, the business code, the appointment view per channel (`NewAppointmentView`, also the outbox snapshot), and the logging, instrumenting and tracing middleware |
 | `internal/scheduling/endpoint` | Scheduling's HTTP surface, in two files. `endpoint.go` has `EndpointSpec`, `Specs` (the route table: one slice literal with a row per operation), `Register`, and the go-kit endpoints (`Make<Operation>Endpoint`) with their request types. `facade.go` has the request decoders, the response encoders and the parsing they share |
@@ -161,12 +161,14 @@ and completes, then render in the dealership's time zone like `startAt`.
    bay run is judged first.
 9. Some active technician must hold every required skill on the local date, otherwise
    `422 NO_QUALIFIED_TECHNICIAN`.
-10. Candidate pairs come from the free runs of the local day: a bay of an allowed type and a
-    qualified technician, each holding the whole run on its own (a run split across two bays is
-    not a candidate), least-loaded first, where load is the booked cells on the bay plus on the
-    technician that day. Pairs of equal load are shuffled with a seed derived from the
-    appointment id the request generated. With no candidate, the booking key is looked up once
-    more, then the answer is `409 SLOT_TAKEN` with alternatives.
+10. Candidate pairs come from one scan of the local day's ledger (`RunAvailability`), which
+    counts for every resource the cells of each run that are free and the cells that are booked:
+    a bay of an allowed type and a qualified technician, each free for every cell of its run on
+    its own (a run split across two bays is not a candidate), least-loaded first, where load is
+    the booked cells on the bay plus on the technician that day. Pairs of equal load are
+    shuffled with a seed derived from the appointment id the request generated. With no
+    candidate, the booking key is looked up once more, then the answer is `409 SLOT_TAKEN` with
+    alternatives.
 
 ### The transaction and the claim
 
@@ -196,7 +198,9 @@ The service reacts to the outcome of an attempt:
 
 `SLOT_TAKEN` and `AVAILABILITY_CHANGED` carry up to five alternatives: the feasible starts for the
 same service type over the requested local date and the next one, later than now, never the
-requested start, nearest first and earlier first on a tie.
+requested start, nearest first and earlier first on a tie. They need the whole day's free time,
+so they read each day's islands of consecutive free cells (`DayLedger`), which nothing else on
+the booking path reads.
 
 The record that the response and the outbox snapshot show is built before the transaction. A
 booking builds it in memory from what the request has already read, so no attempt reads anything
@@ -266,12 +270,12 @@ the dealer system sends, because the ledger must show what is free from now on.
 ### Reschedule and reassign
 
 A reschedule reuses booking's plan, checks, candidate search and claim loop, with the appointment
-as the owner: `DayLedger` counts the owner's cells as free and leaves them out of the loads, and a
-claim treats cells the appointment already owns as claimable, so a move that overlaps itself
-works. The new start is `startAt`, or the current start for a pure reassign, and follows booking's
-rules in booking's order (staff-only service through a customer channel, grid, after now, booking
-horizon, working time), so a reassign sent after the booked start has passed is `422 INVALID_VALUE`
-on `startAt`. A named `serviceBayId` must be an active bay of the dealership of an allowed type
+as the owner: `RunAvailability` and `DayLedger` count the owner's cells as free, `RunAvailability`
+leaves them out of the loads, and a claim treats cells the appointment already owns as claimable,
+so a move that overlaps itself works. The new start is `startAt`, or the current start for a pure
+reassign, and follows booking's rules in booking's order (staff-only service through a customer
+channel, grid, after now, booking horizon, working time), so a reassign sent after the booked
+start has passed is `422 INVALID_VALUE` on `startAt`. A named `serviceBayId` must be an active bay of the dealership of an allowed type
 and a named `technicianId` an active technician (`422 INVALID_VALUE` naming the field) holding the
 required skills on the new local date (`422 NO_QUALIFIED_TECHNICIAN`); the candidates are
 restricted to what is named. The pair tried first is the appointment's current pair with the

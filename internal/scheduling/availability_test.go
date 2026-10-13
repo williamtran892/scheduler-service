@@ -34,16 +34,17 @@ func island(t *testing.T, kind ResourceKind, id, from, to string) Island {
 	return Island{Kind: kind, ResourceID: id, From: z(t, from), To: z(t, to)}
 }
 
-// wholeDay gives every resource one island 07:00Z to 17:00Z.
-func wholeDay(t *testing.T, bays []ServiceBay, techs []Technician) []Island {
-	var is []Island
+// allFree is every bay and technician free for the whole run, as the ledger's scan reports them
+// on an empty day.
+func allFree(bays []ServiceBay, techs []Technician) Free {
+	free := Free{}
 	for _, b := range bays {
-		is = append(is, island(t, ResourceBay, b.ID, "07:00", "17:00"))
+		free[b.ID] = true
 	}
 	for _, tech := range techs {
-		is = append(is, island(t, ResourceTechnician, tech.ID, "07:00", "17:00"))
+		free[tech.ID] = true
 	}
-	return is
+	return free
 }
 
 // startsEvery lists grid starts from..to inclusive, as UTC times on the test day.
@@ -73,33 +74,33 @@ func TestFeasibleStarts_RunSplitAcrossTwoBaysIsNotASlot(t *testing.T) {
 	if !slices.EqualFunc(got, want, time.Time.Equal) {
 		t.Errorf("FeasibleStarts = %v\nwant %v (everything but 09:00)", got, want)
 	}
-	if pairs := CandidatePairs(z(t, "09:00"), grid15, req, []ServiceBay{bay1, general2}, []Technician{sam}, islands, Loads{}, 1); len(pairs) != 0 {
+	// At 09:00 the ledger's scan finds neither bay free for the whole run, so only Sam is free:
+	// the run is free partly on Bay 1 and partly on Bay 2, which makes no candidate.
+	free := Free{"sam": true}
+	if pairs := CandidatePairs(req, []ServiceBay{bay1, general2}, []Technician{sam}, free, Loads{}, 1); len(pairs) != 0 {
 		t.Errorf("CandidatePairs at 09:00 = %v, want none", pairs)
 	}
 }
 
 func TestCandidatePairs_EachTechnicianMustHoldTheWholeRun(t *testing.T) {
-	islands := []Island{
-		island(t, ResourceBay, "bay-1", "07:00", "17:00"),
-		island(t, ResourceTechnician, "sam", "08:00", "08:30"),
-		island(t, ResourceTechnician, "lee", "08:30", "17:00"),
-	}
-	if pairs := CandidatePairs(z(t, "08:00"), grid15, interim, []ServiceBay{bay1}, []Technician{sam, lee}, islands, Loads{}, 1); len(pairs) != 0 {
+	// Sam is free only 08:00-08:30 and Lee only from 08:30, so neither is free for 08:00-08:45.
+	free := Free{"bay-1": true}
+	if pairs := CandidatePairs(interim, []ServiceBay{bay1}, []Technician{sam, lee}, free, Loads{}, 1); len(pairs) != 0 {
 		t.Errorf("CandidatePairs = %v, want none: no single technician is free 08:00-08:45", pairs)
 	}
 }
 
 func TestCandidatePairs_AnyAllowedBayTypeAndEveryRequiredSkill(t *testing.T) {
 	bays, techs := []ServiceBay{bay1, bay2, bay3}, []Technician{sam, priya, lee}
-	islands := wholeDay(t, bays, techs)
+	free := allFree(bays, techs)
 
-	interimPairs := CandidatePairs(z(t, "08:00"), grid15, interim, bays, techs, islands, Loads{}, 1)
+	interimPairs := CandidatePairs(interim, bays, techs, free, Loads{}, 1)
 	if got := pairSet(interimPairs); !slices.Equal(got, []string{
 		"bay-1/lee", "bay-1/priya", "bay-1/sam", "bay-2/lee", "bay-2/priya", "bay-2/sam"}) {
 		t.Errorf("INTERIM pairs = %v, want GENERAL or MOT bays with any GENERAL_SERVICE technician", got)
 	}
 
-	evPairs := CandidatePairs(z(t, "08:00"), grid15, evCheck, bays, techs, islands, Loads{}, 1)
+	evPairs := CandidatePairs(evCheck, bays, techs, free, Loads{}, 1)
 	if got := pairSet(evPairs); !slices.Equal(got, []string{"bay-1/sam", "bay-3/sam"}) {
 		t.Errorf("EV_CHECK pairs = %v, want Bay 1 or Bay 3 with Sam only", got)
 	}
@@ -107,12 +108,14 @@ func TestCandidatePairs_AnyAllowedBayTypeAndEveryRequiredSkill(t *testing.T) {
 
 func TestCandidatePairs_BuffersMustFitOnTheLedger(t *testing.T) {
 	bays, techs := []ServiceBay{bay1}, []Technician{lee}
-	opensAt8 := []Island{island(t, ResourceBay, "bay-1", "08:00", "17:00"), island(t, ResourceTechnician, "lee", "08:00", "17:00")}
 
-	if pairs := CandidatePairs(z(t, "08:00"), grid15, major, bays, techs, opensAt8, Loads{}, 1); len(pairs) != 0 {
+	// MAJOR at 08:00 starts its 15-minute buffer at 07:45, and the ledger opens at 08:00: the
+	// scan counts 7 of the run's 8 cells free, so it reports neither resource free.
+	if pairs := CandidatePairs(major, bays, techs, Free{}, Loads{}, 1); len(pairs) != 0 {
 		t.Errorf("MAJOR at 08:00 = %v, want none: its 15-minute buffer starts at 07:45", pairs)
 	}
-	if pairs := CandidatePairs(z(t, "08:15"), grid15, major, bays, techs, opensAt8, Loads{}, 1); len(pairs) != 1 {
+	// At 08:15 the run starts at 08:00 and both resources are free for all of it.
+	if pairs := CandidatePairs(major, bays, techs, allFree(bays, techs), Loads{}, 1); len(pairs) != 1 {
 		t.Errorf("MAJOR at 08:15 = %v, want one pair", pairs)
 	}
 }
@@ -123,7 +126,7 @@ func TestCandidatePairs_LeastLoadedFirst(t *testing.T) {
 	bays, techs := []ServiceBay{bay1, bay2, bay3}, []Technician{sam, priya, lee}
 	loads := Loads{"bay-3": 10, "sam": 10, "bay-2": 3, "priya": 3}
 
-	pairs := CandidatePairs(z(t, "12:00"), grid15, interim, bays, techs, wholeDay(t, bays, techs), loads, 42)
+	pairs := CandidatePairs(interim, bays, techs, allFree(bays, techs), loads, 42)
 
 	if len(pairs) != 6 {
 		t.Fatalf("got %d pairs, want 6: %v", len(pairs), pairs)
@@ -144,9 +147,9 @@ func TestCandidatePairs_LeastLoadedFirst(t *testing.T) {
 
 func TestCandidatePairs_EqualLoadsAreShuffledBySeed(t *testing.T) {
 	bays, techs := []ServiceBay{bay1, bay2}, []Technician{sam, priya, lee}
-	islands := wholeDay(t, bays, techs)
+	free := allFree(bays, techs)
 	order := func(seed uint64) string {
-		return pairOrder(CandidatePairs(z(t, "08:00"), grid15, interim, bays, techs, islands, Loads{}, seed))
+		return pairOrder(CandidatePairs(interim, bays, techs, free, Loads{}, seed))
 	}
 
 	if a, b := order(7), order(7); a != b {

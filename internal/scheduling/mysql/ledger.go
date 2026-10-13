@@ -143,28 +143,17 @@ func scanCells(rows *sql.Rows) ([]cell, error) {
 }
 
 // DayLedger returns, for one local day at a dealership, the islands of consecutive FREE cells per
-// resource (design 11.4, "free runs per resource") and the BOOKED cell count per resource.
+// resource (design 11.4, "free runs per resource"): the whole day's free time, which the
+// alternatives of SLOT_TAKEN and AVAILABILITY_CHANGED are computed from.
 //
 // The island query needs the length of a cell to tell consecutive cells from a gap. The
 // signature carries no grid, so it joins dealership.slot_minutes: the one column this package
 // reads from another domain's table, through time_slot's own foreign key.
 //
-// The cells booked by owner count as free: they join the islands and are left out of the loads, so
-// a reschedule sees the appointment's own time as available (design 5.4). owner is "" for a new
-// booking, which no appointment id equals.
-func (s *store) DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, scheduling.Loads, error) {
-	islands, err := s.islands(ctx, dealershipID, day, owner)
-	if err != nil {
-		return nil, nil, fmt.Errorf("free runs of dealership %s on %s: %w", dealershipID, day.LocalDate, err)
-	}
-	loads, err := s.loads(ctx, dealershipID, day, owner)
-	if err != nil {
-		return nil, nil, fmt.Errorf("booked cells of dealership %s on %s: %w", dealershipID, day.LocalDate, err)
-	}
-	return islands, loads, nil
-}
-
-func (s *store) islands(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, error) {
+// The cells booked by owner count as free: they join the islands, so a reschedule sees the
+// appointment's own time as available (design 5.4). owner is "" for a new booking, which no
+// appointment id equals.
+func (s *store) DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		WITH free AS (
 		  SELECT ts.resource_kind, ts.resource_id, ts.slot_start, d.slot_minutes,
@@ -183,7 +172,7 @@ func (s *store) islands(ctx context.Context, dealershipID string, day scheduling
 		 ORDER BY resource_kind, resource_id, MIN(slot_start)`,
 		dealershipID, scheduling.CellFree, owner, day.From, day.To)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("free runs of dealership %s on %s: %w", dealershipID, day.LocalDate, err)
 	}
 	defer rows.Close()
 
@@ -191,34 +180,70 @@ func (s *store) islands(ctx context.Context, dealershipID string, day scheduling
 	for rows.Next() {
 		var i scheduling.Island
 		if err := rows.Scan(&i.Kind, &i.ResourceID, &i.From, &i.To); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("free runs of dealership %s on %s: %w", dealershipID, day.LocalDate, err)
 		}
 		islands = append(islands, i)
 	}
-	return islands, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("free runs of dealership %s on %s: %w", dealershipID, day.LocalDate, err)
+	}
+	return islands, nil
 }
 
-func (s *store) loads(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) (scheduling.Loads, error) {
+// RunAvailability scans the day's cells of the dealership once, grouped by resource, and returns
+// the ids of the bays whose every cell of bayRun is free and of the technicians whose every cell
+// of techRun is free, with the BOOKED cell count per resource. A resource that has no cell on
+// the day is in neither.
+//
+// A cell is free when its status is FREE or owner owns it, so the cells booked by owner count as
+// free and are left out of the load: a reschedule sees the appointment's own time as available
+// (design 5.4). owner is "" for a new booking, which no appointment id equals. FREE cells have a
+// NULL appointment_id (ck_slot_owner), and a comparison with NULL is never true, so the NULL
+// conditions below are written out: a FREE cell counts as free through its status alone and
+// never as load, and only a BOOKED cell can be owned by owner or by somebody else.
+//
+// A run is held when the count of its free cells equals its cell count: the primary key makes
+// the cells of a resource unique, so no cell is counted twice, and a cell outside the day's
+// range or missing from the ledger leaves the count short, as a gap between islands did.
+func (s *store) RunAvailability(ctx context.Context, dealershipID string, day scheduling.DayWindow,
+	bayRun, techRun scheduling.CellRun, owner string) (scheduling.Free, scheduling.Loads, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT resource_id, COUNT(*) FROM time_slot
-		 WHERE dealership_id = ? AND status = ? AND appointment_id <> ? AND slot_start >= ? AND slot_start < ?
+		SELECT resource_kind, resource_id,
+		       COUNT(CASE WHEN status = ? AND appointment_id IS NOT NULL AND appointment_id <> ? THEN 1 END),
+		       COUNT(CASE WHEN slot_start BETWEEN ? AND ?
+		                   AND (status = ? OR (appointment_id IS NOT NULL AND appointment_id = ?)) THEN 1 END),
+		       COUNT(CASE WHEN slot_start BETWEEN ? AND ?
+		                   AND (status = ? OR (appointment_id IS NOT NULL AND appointment_id = ?)) THEN 1 END)
+		  FROM time_slot
+		 WHERE dealership_id = ? AND slot_start >= ? AND slot_start < ?
 		 GROUP BY resource_kind, resource_id`,
-		dealershipID, scheduling.CellBooked, owner, day.From, day.To)
+		scheduling.CellBooked, owner, // load
+		bayRun.First, bayRun.Last(), scheduling.CellFree, owner, // free cells of the bay run
+		techRun.First, techRun.Last(), scheduling.CellFree, owner, // free cells of the technician run
+		dealershipID, day.From, day.To)
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("run availability of dealership %s on %s: %w", dealershipID, day.LocalDate, err)
 	}
 	defer rows.Close()
 
-	loads := scheduling.Loads{}
+	free, loads := scheduling.Free{}, scheduling.Loads{}
 	for rows.Next() {
+		var kind scheduling.ResourceKind
 		var id string
-		var n int
-		if err := rows.Scan(&id, &n); err != nil {
-			return nil, err
+		var load, bayFree, techFree int
+		if err := rows.Scan(&kind, &id, &load, &bayFree, &techFree); err != nil {
+			return nil, nil, fmt.Errorf("run availability of dealership %s on %s: %w", dealershipID, day.LocalDate, err)
 		}
-		loads[id] = n
+		if (kind == scheduling.ResourceBay && bayFree == bayRun.Cells) ||
+			(kind == scheduling.ResourceTechnician && techFree == techRun.Cells) {
+			free[id] = true
+		}
+		loads[id] = load
 	}
-	return loads, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("run availability of dealership %s on %s: %w", dealershipID, day.LocalDate, err)
+	}
+	return free, loads, nil
 }
 
 // WorkingCellCounts returns, for each of the two runs, how many of its cells the dealership has a
