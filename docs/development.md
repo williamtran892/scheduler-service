@@ -9,7 +9,7 @@ Where this page and the constitution disagree, the constitution wins. Fix this p
 2. Run them and watch them fail: `make test-integration TAGS=@spec-NNN`.
 3. Write the unit tests, get them approved, and watch them fail: `make test`.
 4. Implement until both layers pass. Refactor with them still green.
-5. Update `docs/architecture.md`, `docs/features.md` and this page as needed.
+5. Update `docs/architecture.md`, `docs/data-model.md`, `docs/features.md` and this page as needed.
 
 ## Tests
 
@@ -74,17 +74,18 @@ Where this page and the constitution disagree, the constitution wins. Fix this p
     start one cell before the current one, refused because a booking 45 or 90 minutes after the
     current grid cell ("... has booked ... 45 minutes after the current grid cell") holds the
     pair. So no late-arrival scenario needs a cell free that another one holds, in any order.
-- **Tags.** Every scenario of a feature carries its `@spec-NNN` and a feature tag (`@booking`,
-  `@claim-ledger`, `@idempotency`, `@concurrency`, `@bootstrap`, `@lifecycle`, `@reschedule`,
-  `@no-show`). Others:
+- **Tags.** Every feature file tags its Feature line, so each scenario inherits the tags: a feature
+  tag (`@bootstrap`, `@booking`, `@claim-ledger`, `@idempotency`, `@concurrency`, `@lifecycle`,
+  `@reschedule`, `@no-show`) and, on every feature after the health check, its `@spec-NNN`.
+  Others:
 
   | Tag | Meaning |
   |---|---|
-  | `@spec-NNN` | The feature that owns the scenario; `make test-integration TAGS=@spec-001` runs one feature |
+  | `@spec-NNN` | The number of the feature that owns the scenario: `@spec-001` is booking (`booking`, `claim_ledger`, `idempotency`, `concurrency`), `@spec-002` the lifecycle (`lifecycle`, `reschedule`, `noshow`); `make test-integration TAGS=@spec-001` runs one feature |
   | `@slow` | Races and sleeps; they still run in CI, and `TAGS='~@slow'` skips them |
   | `@clock` | The outcome depends on the real time: the scenario backdates an appointment, polls for the sweeper, or claims cells at the current time. `make test-integration TAGS=@clock` runs only these |
-  | `@design-N.N` | The row or section of `docs/design/SCHEDULING_DESIGN.md` the scenario reproduces |
-  | `@R1`, `@R2`, `@R3` | The requirement the scenario proves: resource-constrained booking, real-time availability check, confirmed appointment record (`docs/design/SCHEDULING_DESIGN.md` 1.3) |
+  | `@design-N.N` | A cross-reference tag kept on some scenarios; not used by the suite |
+  | `@R1`, `@R2`, `@R3` | The requirement the scenario proves: `@R1` resource-constrained booking (a confirmed appointment or a clear rejection), `@R2` real-time availability check (a bay and a technician are free for the whole job, and two requests never hold the same one), `@R3` the confirmed appointment record |
   | `@wip` | Allowed on a branch, never on `main` |
 
 - **Names** state behaviour in plain language, for example `TestHealth_UnavailableWhenThePingFails`.
@@ -163,7 +164,7 @@ explicitly unknown one.
 | service type | `EV_MAJOR` | `5e000000-0000-4000-8000-000000000004` | 120 min, buffers 15/15, EV_HV_L3, on EV_HV bays |
 | service type | `EV_CHECK` | `5e000000-0000-4000-8000-000000000005` | 30 min, EV_HV_L3, on GENERAL or EV_HV bays |
 | service type | `DIAGNOSTIC` | `5e000000-0000-4000-8000-000000000006` | 50 min, GENERAL_SERVICE, on GENERAL bays, staff only |
-| service type | `AIRCON` | `5e000000-0000-4000-8000-000000000007` | 30 min, AIRCON_FGAS, on GENERAL bays; nobody qualifies today |
+| service type | `AIRCON` | `5e000000-0000-4000-8000-000000000007` | 30 min, AIRCON_FGAS, on GENERAL bays; nobody qualifies |
 | customer, vehicle | `Alice`, `YK21 ABC` | `c0000000-0000-4000-8000-000000000001`, `f0000000-0000-4000-8000-000000000001` | Volkswagen ID.4 |
 | customer, vehicle | `Bob`, `BD70 XYZ` | `c0000000-0000-4000-8000-000000000002`, `f0000000-0000-4000-8000-000000000002` | Ford Focus |
 | customer, vehicle | `Customer 01` to `Customer 20`, `TEST 01` to `TEST 20` | `c0000000-0000-4000-8000-000000000101` to `...120`, `f0000000-0000-4000-8000-000000000101` to `...120` | one vehicle each; twenty distinct booking keys for the races |
@@ -189,8 +190,8 @@ needed.
   a unit test enforces it for production code. It skips `_test.go` files and the `test/` tree,
   where the acceptance suite's `@clock` step backdates cells, and it checks that it still reports
   a production writer.
-- Only the schema file creates tables. Add tables to `local/mysql/schema.sql` and fixture rows
-  to `local/mysql/data.sql`.
+- Only the schema file creates tables. Add tables to `local/mysql/schema.sql`, fixture rows to
+  `local/mysql/data.sql`, and the table to [Data Model](./data-model.md).
 
 ## Before you push
 

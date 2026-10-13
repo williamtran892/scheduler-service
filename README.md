@@ -4,17 +4,18 @@ Unified service scheduler for dealership workshops: one Go process, structured w
 [go-kit](https://github.com/go-kit/kit), backed by MySQL 8.4, with behaviour specified as
 Gherkin features and built through [Spec Kit](https://github.com/github/spec-kit).
 
-The design extracts this repository implements are in [`docs/design/`](./docs/design) (start with its [README](./docs/design/README.md)); the API contract is [`api/openapi.yaml`](./api/openapi.yaml). How the system works today
-is in [`docs/`](./docs). The project rules are in the
-[constitution](./.specify/memory/constitution.md).
+The API contract is [`api/openapi.yaml`](./api/openapi.yaml). How the system works is in
+[`docs/`](./docs): the [architecture](./docs/architecture.md), the [data model](./docs/data-model.md),
+the [features](./docs/features.md) and the [development standards](./docs/development.md). The
+project rules are in the [constitution](./.specify/memory/constitution.md).
 
-> **Status:** features 001 and 002 are delivered. Booking: `POST /appointments` and
-> `GET /appointments/{appointmentId}`. Appointment lifecycle: reschedule (also reassign), cancel,
-> check-in (also the late arrival of a no-show), start, complete and no-show, plus a background
-> sweeper that marks overdue appointments as no-shows, with the schema, the fixture and both test
-> layers behind them. Listing, availability search, authentication and the outbox relay are not
-> built yet; each arrives as a Spec Kit feature under `specs/`.
-> [`docs/features.md`](./docs/features.md) lists what is delivered.
+> **Status:** the service books appointments and runs them through their lifecycle. Booking:
+> `POST /appointments` and `GET /appointments/{appointmentId}`. Appointment lifecycle: reschedule
+> (also reassign), cancel, check-in (also the late arrival of a no-show), start, complete and
+> no-show, plus a background sweeper that marks overdue appointments as no-shows, with the schema,
+> the fixture and both test layers behind them. The service does not do availability search, setup
+> CRUD (workshop, customer and vehicle data come from the fixture), outbox relay or authentication.
+> [`docs/features.md`](./docs/features.md) lists what is implemented.
 
 ## Prerequisites
 
@@ -126,8 +127,7 @@ on a tmpfs data directory with no volume.
 - `make db-reset` recreates MySQL from scratch. `make down` stops everything and discards the data.
 - `make db-shell` opens a mysql prompt.
 
-There is no migration tool in this release. `schema.sql` is the schema, and the application never
-creates tables.
+There is no migration tool. `schema.sql` is the schema, and the application never creates tables.
 
 ## Repository layout
 
@@ -152,15 +152,15 @@ test/acceptance/        godog suite: a black-box HTTP client with relative dates
 scripts/build-image.sh  builds the Linux binary and the scheduler:local image
 scripts/integration.sh  build-image, compose up app + MySQL, wait until healthy, run the suite
 Dockerfile              packages bin/linux/scheduler into a small Alpine image
-docs/                   living documentation (architecture, features, development standards)
+docs/                   living documentation (architecture, data model, features, development standards)
 specs/                  Spec Kit feature folders (created per feature)
 .specify/               Spec Kit memory, templates and scripts
 ```
 
-Scheduling follows the layout of [`docs/design/IMPLEMENTATION_NOTES.md`](./docs/design/IMPLEMENTATION_NOTES.md)
-section 2; Workshop and Customers are only a `mysql` package each for now, and `engagement` is added
-when a feature needs it. [`docs/architecture.md`](./docs/architecture.md) describes the packages
-and their dependency rules.
+Scheduling has the full layers: the root with its shared types, then `mysql`, `service`, `endpoint`
+and `sweeper`. Workshop and Customers are one `mysql` package each, implementing the reader
+interfaces the Scheduling root declares. [`docs/architecture.md`](./docs/architecture.md) describes
+the packages and their dependency rules.
 
 ## Feature workflow
 

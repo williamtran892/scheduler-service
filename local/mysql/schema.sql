@@ -1,75 +1,53 @@
--- Scheduler schema for MySQL 8.4.
+-- Scheduler schema for MySQL 8.4 (InnoDB, utf8mb4).
 --
 -- Executed by the MySQL container on every start (docker-compose.yml mounts it as
--- 01-schema.sql). This file is the only place tables are created; the application never
--- creates or alters them. Tables are added here by the feature that needs them.
---
--- Conventions (docs/design/IMPLEMENTATION_NOTES.md sections 0 and 5; target schema in docs/design/schema.sql):
---   * No stored procedures, no triggers.
---   * No ENUM columns: VARCHAR(20) NOT NULL, allowed values are Go constants (deviation D3).
---   * Every DATETIME is UTC; the server and every session run at time_zone '+00:00'.
---
--- Everything below is copied verbatim from docs/design/schema.sql, except its
--- CREATE DATABASE / USE statements: the container creates and selects the `scheduler`
--- database (MYSQL_DATABASE in docker-compose.yml) before it runs this script.
-
--- =============================================================================
--- Unified Service Scheduler – MySQL schema (v3, time-grid capacity ledger)
--- v3 (2026-10-12): no stored routines or triggers, enumerations as VARCHAR,
--- no idempotency_key table (a booking is idempotent on its natural key:
--- vehicle, customer, start, kind). See docs/design/IMPLEMENTATION_NOTES.md section 0 (D2, D3, D4).
--- Target: MySQL 8.0.16+ / 8.4 LTS, InnoDB, utf8mb4
+-- 01-schema.sql; local/mysql/data.sql follows as 02-data.sql). This file is the only place
+-- tables are created; the application never creates or alters them. The container creates and
+-- selects the `scheduler` database (MYSQL_DATABASE in docker-compose.yml) before it runs this
+-- script.
 --
 -- Capacity model: every bay and every technician has one row per grid cell
--- (dealership.slot_minutes, default 15) for every cell inside dealership
--- opening hours. A booking claims a run of consecutive cells on one bay and
--- on one technician. A cell row that does not exist is time the resource is
--- not available. The customer-facing appointment keeps exact minute times;
--- only the capacity ledger is quantised.
---
--- SCOPE (v1): every cell that exists is bookable by anyone, and a booking is
--- confirmed in one transaction (no time-boxed holds). Out of scope: holds,
--- shift patterns, per-date rota overrides and HR import (a weekly rota per
--- resource is in; a resource with no rota works the opening hours),
--- technician absences, capacity blocks, channel reservations, per-service
--- daily caps, and reallocation of bookings when a technician drops out.
--- Each of those later changes only which cells exist or which are claimable;
--- none touches the booking flows.
+-- (dealership.slot_minutes, default 15) for every cell inside working time. A booking claims a
+-- run of consecutive cells on one bay and on one technician. A cell row that does not exist is
+-- time the resource is not available, so working time is the set of cells that exist; the
+-- fixture in local/mysql/data.sql creates them. The customer-facing appointment keeps exact
+-- minute times; only the capacity ledger is quantised. Every cell that exists is bookable by
+-- anyone, and a booking is confirmed in one transaction (there are no time-boxed holds).
 --
 -- Conventions:
---   * All instants are DATETIME(6) in UTC; cells are DATETIME on the grid.
---     The application sets time_zone = '+00:00' on every connection.
---   * Rows on the booking path are never hard-deleted; status changes free
---     capacity and preserve the audit trail.
---   * Every aggregate-root table (dealership, bay, technician, skill,
---     service type, customer, vehicle, appointment) carries tenant_id and the
---     repository filters on it (MySQL has no row-level security). Child and
---     ledger tables (opening hours, technician_skill, time_slot, events) are
---     reached only through their parent and carry the parent key instead.
---   * IDs are CHAR(36) UUIDs for readability; BINARY(16) in production.
---   * Double-booking prevention: the application claims the cells of a run
---     with one conditional UPDATE (status FREE, or already owned by the
---     claiming appointment) and checks that it affected exactly the run's
---     cell count; fewer means a cell is missing or taken and the transaction
---     rolls back. An UPDATE is a locking current read, so this is correct at
---     any isolation level. store.Tx.ClaimPair is the single sanctioned claim path
---     and store.Tx.ReleaseCells the single release path; see the comment
---     block after time_slot. MySQL error 1213 (deadlock victim, possible when
---     a reschedule races a booking on the same cells) is retried once.
---   * No stored procedures, functions or triggers. All logic lives in the
---     application so it is versioned, tested and reviewed as code.
---   * Enumerated values (bay type, statuses, kind, channel, resource kind)
---     are VARCHAR(20) columns. The allowed values are defined once in the
---     application (internal/domain/enums.go) and validated there, both on
---     input and when rows are read. Only cross-column invariants are CHECK
---     constraints here.
---   * The grid is anchored to the UTC clock: every cell starts at a whole
---     multiple of slot_minutes from the top of the hour. The materialiser and
---     the claim both reject a start that is not (OFF_GRID_START), in code.
+--   * No stored procedures, functions or triggers. All logic lives in the application, so it
+--     is versioned, tested and reviewed as code.
+--   * No ENUM columns. Enumerated values (bay type, statuses, kind, channel, resource kind)
+--     are VARCHAR(20) columns. The values of Scheduling's enumerations (appointment kind and
+--     status, channel, resource kind, cell status) are defined once in Go,
+--     internal/scheduling/enums.go, and validated there, both on input and when rows are
+--     read; the bay type and the bay and technician statuses are read as text. Only
+--     cross-column invariants are CHECK constraints here.
+--   * Every instant is DATETIME(6) in UTC; cells are DATETIME on the grid. The server runs at
+--     time_zone '+00:00' and the application sets it on every connection.
+--   * The grid is anchored to the UTC clock: every cell starts at a whole multiple of
+--     slot_minutes from the top of the hour. A booking whose start is not on it is rejected
+--     (OFF_GRID_START), in code.
+--   * Rows on the booking path are never hard-deleted; status changes free capacity and
+--     preserve the audit trail.
+--   * Every aggregate-root table (dealership, bay, technician, skill, service type, customer,
+--     vehicle, appointment) carries tenant_id, and the service checks that the service type,
+--     customer and vehicle of a booking share the dealership's tenant (MySQL has no row-level
+--     security). Child and ledger tables (technician_skill, time_slot, events) are reached
+--     only through their parent and carry the parent key instead.
+--   * IDs are CHAR(36) UUIDs.
+--   * Idempotency is the natural booking key: a vehicle, a customer, a start time and a kind
+--     identify one appointment, enforced by uq_appointment_booking. There is no idempotency-key
+--     table; see the comment above the appointment table.
+--   * Double-booking prevention: the application claims the cells of a run with one
+--     conditional UPDATE (status FREE, or already owned by the claiming appointment) and checks
+--     that it affected exactly the run's cell count; fewer means a cell is missing or taken and
+--     the transaction rolls back. An UPDATE is a locking current read, so this is correct at
+--     any isolation level. Tx.ClaimPair in internal/scheduling/mysql/ledger.go is the single
+--     claim path and Tx.ReleaseCells the single release path; see the comment block after
+--     time_slot. MySQL error 1213 (deadlock victim, possible when a reschedule races a booking
+--     on the same cells) is retried once.
 -- =============================================================================
--- NOTE (scheduler-service copy): opening_hours, opening_exception and rota_assignment are
--- omitted. They feed the materialiser, which is not built in this release; cells come from
--- the fixture in local/mysql/data.sql.
 
 SET NAMES utf8mb4;
 SET time_zone = '+00:00';
@@ -110,8 +88,8 @@ CREATE TABLE service_bay (
     tenant_id      CHAR(36)     NOT NULL,
     dealership_id  CHAR(36)     NOT NULL,
     name           VARCHAR(100) NOT NULL,
-    type           VARCHAR(20)  NOT NULL DEFAULT 'GENERAL',   -- domain.BayType: GENERAL|MOT|EV_HV|ALIGNMENT|BODYSHOP|EXPRESS
-    status         VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE',    -- domain.BayStatus: ACTIVE|OUT_OF_SERVICE|RETIRED
+    type           VARCHAR(20)  NOT NULL DEFAULT 'GENERAL',   -- bay type: GENERAL|MOT|EV_HV|ALIGNMENT|BODYSHOP|EXPRESS
+    status         VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE',    -- bay status: ACTIVE|OUT_OF_SERVICE|RETIRED
     created_at     DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
     UNIQUE KEY uq_bay_name (dealership_id, name),
@@ -124,7 +102,7 @@ CREATE TABLE technician (
     tenant_id          CHAR(36)     NOT NULL,
     dealership_id      CHAR(36)     NOT NULL,
     display_name       VARCHAR(200) NOT NULL,
-    status             VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE', -- domain.TechnicianStatus: ACTIVE|INACTIVE
+    status             VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE', -- technician status: ACTIVE|INACTIVE
     created_at         DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
     KEY ix_technician_dealership (dealership_id, status),
@@ -175,7 +153,7 @@ CREATE TABLE service_type (
 
 CREATE TABLE service_type_bay_type (                            -- any one of these (OR)
     service_type_id  CHAR(36) NOT NULL,
-    bay_type         VARCHAR(20) NOT NULL,                      -- domain.BayType
+    bay_type         VARCHAR(20) NOT NULL,                      -- a bay type, as in service_bay.type
     PRIMARY KEY (service_type_id, bay_type),
     CONSTRAINT fk_stbt_service FOREIGN KEY (service_type_id) REFERENCES service_type(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
@@ -228,7 +206,7 @@ CREATE TABLE vehicle (
 -- Booking: appointments and the time-grid ledger
 -- -----------------------------------------------------------------------------
 
--- appointment.id is generated by the Booking Service and doubles as the
+-- appointment.id is generated by the service and doubles as the
 -- customer-facing reference; there is no separate reference column.
 --
 -- Idempotency is the natural booking key: a vehicle, a customer, a start time
@@ -244,7 +222,7 @@ CREATE TABLE vehicle (
 -- The key covers every status, so a cancelled or no-show appointment also
 -- blocks a new booking of the exact same minute for the same vehicle, customer
 -- and kind; the client receives 409 DUPLICATE_BOOKING with that appointment and
--- picks another time. Reinstating a cancelled appointment is a later feature.
+-- picks another time.
 CREATE TABLE appointment (
     id                    CHAR(36)    NOT NULL DEFAULT (UUID()), -- generated by the service (so it can be referenced in the same tx); also the reference
     tenant_id             CHAR(36)    NOT NULL,
@@ -252,17 +230,17 @@ CREATE TABLE appointment (
     customer_id           CHAR(36)    NOT NULL,
     vehicle_id            CHAR(36)    NOT NULL,
     service_type_id       CHAR(36)    NOT NULL,
-    kind                  VARCHAR(20) NOT NULL DEFAULT 'DROP_OFF',   -- domain.AppointmentKind: WAITER|DROP_OFF|LOANER
+    kind                  VARCHAR(20) NOT NULL DEFAULT 'DROP_OFF',   -- AppointmentKind (internal/scheduling/enums.go): WAITER|DROP_OFF|LOANER
     start_at              DATETIME(6) NOT NULL,                 -- exact arrival / work start promised to customer
     end_at                DATETIME(6) NOT NULL,                 -- exact promised ready time (no buffers)
     actual_start_at       DATETIME(6) NULL,                     -- set when the technician clocks on (IN_PROGRESS)
     actual_end_at         DATETIME(6) NULL,                     -- set when the job is completed; actual duration = actual_end_at - actual_start_at
-    service_bay_id        CHAR(36)    NOT NULL,                 -- denormalised from claimed cells (R3)
+    service_bay_id        CHAR(36)    NOT NULL,                 -- denormalised from the claimed cells
     technician_id         CHAR(36)    NOT NULL,
-    status                VARCHAR(20) NOT NULL DEFAULT 'CONFIRMED',  -- domain.AppointmentStatus: CONFIRMED|CHECKED_IN|IN_PROGRESS|COMPLETED|CANCELLED|NO_SHOW
+    status                VARCHAR(20) NOT NULL DEFAULT 'CONFIRMED',  -- AppointmentStatus (internal/scheduling/enums.go): CONFIRMED|CHECKED_IN|IN_PROGRESS|COMPLETED|CANCELLED|NO_SHOW
     customer_requests     JSON        NOT NULL DEFAULT (JSON_OBJECT()),
     notes                 TEXT        NULL,
-    channel               VARCHAR(20) NOT NULL,                      -- domain.Channel: CUSTOMER_WEB|CUSTOMER_APP|ADVISOR_CONSOLE|CALL_CENTRE|INTEGRATION
+    channel               VARCHAR(20) NOT NULL,                      -- Channel (internal/scheduling/enums.go): CUSTOMER_WEB|CUSTOMER_APP|ADVISOR_CONSOLE|CALL_CENTRE|INTEGRATION
     version               INT UNSIGNED NOT NULL DEFAULT 1,           -- optimistic lock; the application writes version = version + 1 WHERE version = ?
     created_at            DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at            DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -283,13 +261,13 @@ CREATE TABLE appointment (
 ) ENGINE=InnoDB;
 
 -- The capacity ledger. One row per resource per grid cell inside working time.
--- Generated ahead by the materialiser; a missing row = resource not available.
+-- Created by the fixture (local/mysql/data.sql); a missing row = resource not available.
 CREATE TABLE time_slot (
     dealership_id      CHAR(36)    NOT NULL,
-    resource_kind      VARCHAR(20) NOT NULL,                       -- domain.ResourceKind: BAY|TECHNICIAN
+    resource_kind      VARCHAR(20) NOT NULL,                       -- ResourceKind (internal/scheduling/enums.go): BAY|TECHNICIAN
     resource_id        CHAR(36)    NOT NULL,
     slot_start         DATETIME    NOT NULL,                    -- on the grid, UTC
-    status             VARCHAR(20) NOT NULL DEFAULT 'FREE',        -- domain.CellStatus: FREE|BOOKED (phase 2: BLOCKED, HELD)
+    status             VARCHAR(20) NOT NULL DEFAULT 'FREE',        -- CellStatus (internal/scheduling/enums.go): FREE|BOOKED
     appointment_id     CHAR(36)    NULL,                        -- while BOOKED
     version            INT UNSIGNED NOT NULL DEFAULT 0,         -- flip counter for debugging; bumped on every claim and release
     PRIMARY KEY (resource_kind, resource_id, slot_start),       -- uniqueness guarantee; lock order within a statement
@@ -303,7 +281,7 @@ CREATE TABLE time_slot (
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
--- How capacity is claimed and released (application code, store/ledger.go)
+-- How capacity is claimed and released (application code, internal/scheduling/mysql/ledger.go)
 --
 -- CLAIM, per resource, bay first then technician, inside the booking tx:
 --   UPDATE time_slot SET status = 'BOOKED', appointment_id = ?, version = version + 1
@@ -312,7 +290,7 @@ CREATE TABLE time_slot (
 --      AND (status = 'FREE' OR appointment_id = ?);   -- own cells count as claimable
 --   -- in code: affected rows = cells needed -> claimed
 --   --          fewer -> SELECT ... FOR UPDATE over the range to name the failure:
---   --            fewer rows than cells needed -> BAY_NOT_OPEN / TECHNICIAN_NOT_WORKING
+--   --            fewer rows than cells needed -> ErrBayNotOpen / ErrTechnicianNotWorking (AVAILABILITY_CHANGED)
 --   --            a row BOOKED by another appointment -> SLOT_TAKEN
 --   --          and the transaction rolls back (the UPDATE may already have
 --   --          changed the cells it did match)
@@ -341,15 +319,10 @@ CREATE TABLE time_slot (
 -- RELEASE (cancel, no-show, complete, reschedule):
 --   SELECT ... FROM time_slot WHERE appointment_id = ? FOR UPDATE;
 --   -- in code: keep cells inside the new runs (reschedule) or starting before
---   --          keep_before (complete); everything else is released
+--   --          Keep.Before (complete); everything else is released
 --   UPDATE time_slot SET status = 'FREE', appointment_id = NULL, version = version + 1
 --    WHERE appointment_id = ? AND slot_start IN (...);
 --
--- MATERIALISE: for each resource and local date the application resolves the
--- working intervals (rota_assignment rows valid on that date for its weekday,
--- else the opening window), intersects them with the dealership opening window, converts to UTC in code, generates
--- the cell starts and INSERT IGNOREs them in one batch per resource-day.
--- Re-running is harmless; FREE cells outside the intervals are deleted.
 -- -----------------------------------------------------------------------------
 
 -- -----------------------------------------------------------------------------
@@ -361,7 +334,7 @@ CREATE TABLE appointment_event (
     event_type      VARCHAR(50)  NOT NULL,
     payload         JSON         NOT NULL DEFAULT (JSON_OBJECT()),
     actor           VARCHAR(100) NOT NULL,
-    channel         VARCHAR(20)  NULL,                          -- domain.Channel
+    channel         VARCHAR(20)  NULL,                          -- a Channel; NULL when a background job acted
     occurred_at     DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
     KEY ix_event_appointment (appointment_id, occurred_at),

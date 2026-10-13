@@ -1,6 +1,6 @@
 # System Architecture
 
-This page describes how the system is built today. Update it in the same change that alters it.
+This page describes how the system is built. Update it in the same change that alters it.
 
 ## Process
 
@@ -9,7 +9,7 @@ The service is one binary, `cmd/scheduler`, and it runs in one mode:
 1. It loads configuration from the environment (`platform.LoadConfig`).
 2. It installs OpenTelemetry providers for the configured exporter (`platform.SetupOTel`).
 3. It opens the MySQL pool and pings it (`platform.OpenMySQL`). The schema must already exist.
-4. It wires the Scheduling service: the MySQL repositories (the Scheduling store, and the setup
+4. It wires the Scheduling service: the MySQL repositories (the Scheduling store, and the workshop
    and customers repositories as its two readers), the real clock and id generator, and the
    logging, instrumenting and tracing middleware.
 5. It builds the HTTP handler (`app.NewHandler`) over the endpoint specs of the wrapped Scheduling
@@ -32,10 +32,10 @@ healthy itself once `GET /healthz` answers `200`.
 
 ## Packages
 
-The code is split per domain under `internal/`. Scheduling has the full layers; Workshop Setup and
-Customer & Vehicle are read-only in this release and are one `mysql` package each, which
-implements Scheduling's reader interfaces. The design behind the split is in
-[`docs/design/IMPLEMENTATION_NOTES.md`](./design/IMPLEMENTATION_NOTES.md), section 2.
+The code is split per domain under `internal/`. Scheduling has the full layers: the root, `mysql`,
+`service`, `endpoint` and `sweeper`. Workshop Setup and Customer & Vehicle are read-only and are
+one `mysql` package each, which implements one of Scheduling's reader interfaces and returns
+Scheduling's own types.
 
 | Package | Responsibility |
 |---|---|
@@ -45,7 +45,7 @@ implements Scheduling's reader interfaces. The design behind the split is in
 | `internal/workshop/mysql` | Workshop Setup's `Repository`, which implements `scheduling.WorkshopReader` over `dealership`, `service_bay`, `technician`, `skill`, `technician_skill`, `service_type`, `service_type_bay_type`, `service_type_skill` and returns Scheduling's types. A service type and its skills and bay types are one query into a `ServiceRequirement`; only `ACTIVE` bays and technicians are listed, and a technician carries the skills valid on the date asked (`valid_from <= date`, `valid_to` null or `>= date`) |
 | `internal/customers/mysql` | Customer & Vehicle's `Repository`, which implements `scheduling.CustomerReader` over `customer` and `vehicle` and returns Scheduling's types |
 | `internal/scheduling` | Scheduling root, plain Go with no SQL or HTTP. `service.go` declares every shared struct and interface in one place, in sections: the appointment and ledger types (`Appointment`, `BookingKey`, `CustomerRequests`, `Event`, `CellRange`, `OwnedCells`, `ResourceRun`, `Keep`, `Loads`), the grid (`Grid`, `CellRun`), the requirement and resources (`ServiceRequirement`, `DealershipConfig`, `DayWindow`, `ServiceBay`, `Technician`), the customers (`Customer`, `Vehicle`) and the readers (`WorkshopReader`, `CustomerReader`). The methods and functions stay with their algorithms: `grid.go` (`Align`, `Floor`, `Ceil`, `CellsFor`, and `CellRun`'s `Last` and `End`), `requirement.go` (`ServiceRequirement.Runs`, `DealershipConfig.Day`, `Technician.HasAll`), `appointment.go` (`Appointment.Key`, `Keep.Keeps`), `enums.go` (the enumerations and the appointment status transition table, `CanTransitionTo`) and `errors.go` (the typed errors) |
-| `internal/scheduling/mysql` | Scheduling's own data access. `store.go` declares the interfaces `Store` and `Tx`; `db.go` has their implementation, the unexported types `store` and `tx` behind `New(db) Store`, over `appointment`, `time_slot`, `appointment_event` and `outbox`. It maps MySQL errors 1062 on `uq_appointment_booking` and 1213 to Scheduling's errors. `ClaimPair` and `ReleaseCells` in `ledger.go` are the only code that writes `time_slot`; `GetAvailableResources` and `GetResourceLoad`, the two reads candidate selection makes of the ledger, are in `ledger.go` too |
+| `internal/scheduling/mysql` | Scheduling's own data access. `store.go` declares the interfaces `Store` and `Tx`; `db.go` has their implementation, the unexported types `store` and `tx` behind `New(db) Store`, over `appointment`, `time_slot`, `appointment_event` and `outbox`. `appointments.go`, `events.go` and `outbox.go` hold the queries of those tables, and `errors.go` maps MySQL errors 1062 on `uq_appointment_booking` and 1213 to Scheduling's errors. `ClaimPair` and `ReleaseCells` in `ledger.go` are the only code that writes `time_slot`; `GetAvailableResources` and `GetResourceLoad`, the two reads candidate selection makes of the ledger, are in `ledger.go` too |
 | `internal/scheduling/service` | The go-kit service, with no HTTP routes or decoders: `Service` (`Book`, `Get`, `Reschedule`, `Cancel`, `CheckIn`, `Start`, `Complete`, `MarkNoShow`), its commands and `Record`, the business code, candidate selection (`candidates.go`: the eligible resources, the pairs and their tie shuffle), the appointment view per channel (`NewAppointmentView`, also the outbox snapshot), and the logging, instrumenting and tracing middleware |
 | `internal/scheduling/endpoint` | Scheduling's HTTP surface, in two files. `endpoint.go` has `EndpointSpec`, `Specs` (the route table: one slice literal with a row per operation), `Register`, and the go-kit endpoints (`Make<Operation>Endpoint`) with their request types. `facade.go` has the request decoders, the response encoders and the parsing they share |
 | `internal/scheduling/sweeper` | The no-show sweeper: `Service.RunOnce` marks overdue appointments through the Scheduling service's own `MarkNoShow`, and `Worker` runs it on a ticker until its context ends |
@@ -102,17 +102,17 @@ decoder in `facade.go`, and a row above. Business failures travel as the respons
 written by `platform.EncodeError`, as are the errors of a decoder, through the
 `kithttp.ServerErrorEncoder` that `app.NewHandler` passes to `Register`.
 
-Routes have no `/v1` prefix; the contract's `/v1` is read as a gateway base path. The other
-operations of the contract (listing, availability search, setup) are not served yet, and the mux
-answers `405` or `404` for them. Every lifecycle route takes a JSON body with the required
-integer `expectedVersion` and an optional `reason`, and answers `200` with the appointment after
-the transition, in the calling channel's view.
+Routes have no `/v1` prefix; the `/v1` in the servers of `api/openapi.yaml` is a gateway base
+path. The mux serves only the routes above and answers `404` or `405` for any other. Every
+lifecycle route takes a JSON body with the required integer `expectedVersion` and an optional
+`reason`, and answers `200` with the appointment after the transition, in the calling channel's
+view.
 
 ### Channel
 
 There is no authentication. Every `/appointments` request names its calling channel in the
-`X-Channel` header, a stand-in for the `channel` claim of the contract's bearer token. A missing
-header is `400 VALIDATION_ERROR` and an unknown value `422 INVALID_VALUE`, both naming
+`X-Channel` header, which stands in for the `channel` claim of the bearer token that
+`api/openapi.yaml` describes. A missing header is `400 VALIDATION_ERROR` and an unknown value `422 INVALID_VALUE`, both naming
 `X-Channel`; `401` is never returned. `403 FORBIDDEN` is returned when a customer channel asks
 for a staff action: check-in, start, complete, no-show, or a reschedule that names a bay or a
 technician. Cancel and a reschedule in time only are open to every channel, and ownership is not
@@ -153,7 +153,7 @@ and completes, then render in the dealership's time zone like `startAt`.
    (`422 INVALID_VALUE` on `startAt`).
 7. The bay run and the technician run follow from the service type: both start in the cell that
    `start - buffer before` falls in and cover `buffer before + duration + buffer after`, rounded
-   up to whole cells. They are identical today.
+   up to whole cells. The two runs are the same.
 8. Working time is the ledger: every cell of both runs must exist for the dealership, on any
    resource and in any status, otherwise `422 OUTSIDE_OPENING_HOURS`. One query counts the
    distinct cell starts of each run over the range that covers both (`WorkingCellCounts`); the
@@ -193,7 +193,7 @@ as many rows as the run has cells. The argument that this double books nothing:
   therefore serialise on the first shared row, and the loser, after the winner commits, finds the
   cells `BOOKED` by another appointment: its `UPDATE` matches fewer rows than the run has cells
   and the claim is refused.
-- The order of the locks is the same as before, bay run, then technician run, ascending
+- Every claim takes its locks in one order: the bay run, then the technician run, ascending
   `slot_start` within a run, so plain claims cannot deadlock each other. A reschedule can still
   be the victim when a booking races it for the cells it frees (see Reschedule and reassign).
 - `version = version + 1` always changes a matched row, so the affected-row count includes every
@@ -221,8 +221,7 @@ The service reacts to the outcome of an attempt:
 | duplicate booking key (MySQL 1062) | the appointment that owns the key, as in check 3 |
 
 A taken slot is answered with `409 SLOT_TAKEN` and nothing else: the problem has no member that
-offers another time. Finding another time is the availability endpoint's job, and that endpoint
-is not in this release, so nothing on the booking path computes feasible starts.
+offers another time, and nothing on the booking path computes feasible starts.
 `AVAILABILITY_CHANGED` is likewise only its code and detail.
 
 The record that the response and the outbox snapshot show is built before the transaction. A
@@ -240,8 +239,26 @@ from `scheduling/mysql`, the names of the dealership, service type, bay and tech
 
 ## Lifecycle
 
-Reschedule, cancel, check-in, start, complete and no-show are transitions of the appointment's
-status. `scheduling.AppointmentStatus.CanTransitionTo` is the one table (design 4.3):
+Booking creates an appointment in `CONFIRMED`. Reschedule, cancel, check-in, start, complete and
+no-show are transitions of its status, and `scheduling.AppointmentStatus.CanTransitionTo` is the
+one table that allows them (`appointmentTransitions` in `internal/scheduling/enums.go`).
+`COMPLETED` and `CANCELLED` are final, and so is `NO_SHOW` apart from the late arrival. Each edge
+below names the operation and what it does to the ledger.
+
+```mermaid
+stateDiagram-v2
+    [*] --> CONFIRMED : book / claims the bay and technician runs
+    CONFIRMED --> CONFIRMED : reschedule / claims the new runs, releases the cells outside them
+    CONFIRMED --> CHECKED_IN : check-in / ledger unchanged
+    CONFIRMED --> CANCELLED : cancel / releases all cells
+    CONFIRMED --> NO_SHOW : no-show (staff or sweeper) / releases all cells
+    NO_SHOW --> CHECKED_IN : check-in, late arrival / claims runs from the current grid cell
+    CHECKED_IN --> IN_PROGRESS : start / ledger unchanged
+    CHECKED_IN --> CANCELLED : cancel / releases all cells
+    IN_PROGRESS --> COMPLETED : complete / releases cells from Ceil(now) on
+    COMPLETED --> [*]
+    CANCELLED --> [*]
+```
 
 | From | To | Operation | Ledger effect |
 |---|---|---|---|
@@ -249,10 +266,10 @@ status. `scheduling.AppointmentStatus.CanTransitionTo` is the one table (design 
 | `CONFIRMED` | `CHECKED_IN` | check-in | none |
 | `CONFIRMED` | `CANCELLED` | cancel | release every owned cell |
 | `CONFIRMED` | `NO_SHOW` | no-show (staff or sweeper) | release every owned cell |
-| `NO_SHOW` | `CHECKED_IN` | check-in (late arrival) | claim runs from the current grid cell on a free qualified pair |
+| `NO_SHOW` | `CHECKED_IN` | check-in (late arrival) | claim runs from the current grid cell on a free qualified pair; the appointment's start and end move to that cell |
 | `CHECKED_IN` | `IN_PROGRESS` | start | none; sets `actual_start_at` |
 | `CHECKED_IN` | `CANCELLED` | cancel | release every owned cell |
-| `IN_PROGRESS` | `COMPLETED` | complete | release the owned cells that start at or after `Ceil(now)`; sets `actual_end_at` |
+| `IN_PROGRESS` | `COMPLETED` | complete | release the owned cells that start at or after `Ceil(now)`, the next grid cell start (`now` itself on one); sets `actual_end_at` |
 
 Each method checks in this order and stops at the first failure: the endpoint's decoding (`400`
 and `422`); the channel may take the action (`403`, before anything is read); the appointment
@@ -273,10 +290,11 @@ claim and release the table lists; the audit event; the outbox row. A refusal an
 of it behind. The event types are `RESCHEDULED`, `CANCELLED`, `CHECKED_IN`, `STARTED`, `COMPLETED`
 and `NO_SHOW`, the outbox types `AppointmentRescheduled`, `AppointmentCancelled`,
 `AppointmentCheckedIn`, `AppointmentStarted`, `AppointmentCompleted` and `AppointmentNoShow`; like
-booking's, the outbox row holds the staff view of the record after the transition and nothing
-relays it yet. The event payload carries the `reason` when given, the previous and new placement
-of a move, `mileage` and `additionalConcerns` of a check-in (the record has no field for them),
-the actual time, and the number of cells a no-show or completion released.
+booking's, the outbox row holds the staff view of the record after the transition, and nothing
+reads it. The event payload carries the `reason` when given, the previous status of a
+cancellation, the previous and new placement of a move, `mileage` and `additionalConcerns` of a
+check-in (the record has no field for them), the actual time, and the number of cells a no-show
+or completion released.
 
 ### Release
 
@@ -298,10 +316,10 @@ them out of the loads, and a claim treats cells the appointment already owns as 
 so a move that overlaps itself works. The new start is `startAt`, or the current start for a pure
 reassign, and follows booking's rules in booking's order (staff-only service through a customer
 channel, grid, after now, booking horizon, working time), so a reassign sent after the booked
-start has passed is `422 INVALID_VALUE` on `startAt`. A named `serviceBayId` must be an active bay of the dealership of an allowed type
-and a named `technicianId` an active technician (`422 INVALID_VALUE` naming the field) holding the
-required skills on the new local date (`422 NO_QUALIFIED_TECHNICIAN`); the candidates are
-restricted to what is named. The pair tried first is the appointment's current pair with the
+start has passed is `422 INVALID_VALUE` on `startAt`. A named `serviceBayId` must be an active bay
+of the dealership of an allowed type and a named `technicianId` an active technician (`422
+INVALID_VALUE` naming the field) holding the required skills on the new local date (`422
+NO_QUALIFIED_TECHNICIAN`); the candidates are restricted to what is named. The pair tried first is the appointment's current pair with the
 named bay or technician put in its place, so a move keeps its bay and technician when they are
 free; the others follow booking's order. Per pair, one transaction runs the update, the claim, the
 release of every owned cell outside the new runs and the event and outbox row. A taken pair moves
@@ -309,8 +327,10 @@ to the next, a deadlock victim is retried once on the same pair, missing cells r
 candidates once and then answer `409 AVAILABILITY_CHANGED`, and no pair left is `409 SLOT_TAKEN`.
 A new start that is the booking key of another appointment, in any status, is `409
 DUPLICATE_BOOKING` carrying it (MySQL 1062 on `uq_appointment_booking` from the update). In every
-refusal the appointment and its cells are unchanged. A reschedule can be the deadlock victim when
-a booking races it for the cells it frees (design 11.3).
+refusal the appointment and its cells are unchanged. A reschedule claims its new cells before it
+frees its old ones, so a booking that overlaps both runs can hold the old cells while it waits for
+the new ones; InnoDB breaks that cycle with error 1213 and the reschedule can be the victim, which
+the claim loop retries once on the same pair.
 
 ### Late arrival
 
@@ -332,9 +352,10 @@ channel (the event's `channel` column is `NULL`). An appointment that is not due
 grace equal to now is not yet due), no longer `CONFIRMED`, changed by someone else first
 (`VERSION_CONFLICT`) or no longer allowed to move (`INVALID_TRANSITION`) is skipped; any other
 failure is logged with the appointment id and counted, and the run goes on. A failed query is
-logged and returned. `Worker` runs it every `NO_SHOW_SWEEP_INTERVAL` until its context ends. One
-instance runs in this release: there is no batching, leader election or locking between
-instances.
+logged and returned. `Worker` runs it every `NO_SHOW_SWEEP_INTERVAL` until its context ends. Each
+process runs its own sweeper, with no batching or coordination between processes: two sweepers
+that pick the same appointment are serialised by the version-guarded update, and the second skips
+it as a `VERSION_CONFLICT`.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -359,10 +380,13 @@ status codes, from one table of the contract's problem codes:
 | `OFF_GRID_START`, `OUTSIDE_OPENING_HOURS`, `NO_QUALIFIED_TECHNICIAN`, `SERVICE_NOT_BOOKABLE_ONLINE` | 422 | the booking checks above, also applied to a reschedule |
 | `SLOT_TAKEN`, `AVAILABILITY_CHANGED`, `DUPLICATE_BOOKING` | 409 | the booking outcomes above, also a reschedule's; a late arrival answers only `SLOT_TAKEN` |
 | `VERSION_CONFLICT`, `INVALID_TRANSITION` | 409 | the lifecycle checks above |
-| `DUPLICATE` | 409 | in the table, not produced yet |
+| `DUPLICATE` | 409 | in the table; no operation produces it |
 | `FORBIDDEN` | 403 | a customer channel asking for a staff action |
-| `UNAUTHORIZED` | 401 | in the table, not produced yet |
+| `UNAUTHORIZED` | 401 | in the table; never produced, because there is no authentication |
 | anything else | 500 | `INTERNAL`, with no detail returned; the logging middleware records the error |
+
+The health check writes its own `503` problem with code `DATABASE_UNAVAILABLE`; it is not an error
+that passes through `EncodeError`.
 
 ## Data
 
@@ -373,7 +397,8 @@ and enumerations are `VARCHAR` columns. Scheduling's allowed values are Go const
 scan functions in its root. Workshop's bay types and statuses are not: Scheduling reads a bay type as
 text, and the Workshop repository selects `ACTIVE` in SQL.
 
-The schema has 15 tables:
+The schema has 15 tables in three groups. [Data Model](./data-model.md) has the ER diagram, every
+column, the keys and indexes, and what each table is for.
 
 | Domain | Tables |
 |---|---|
@@ -388,8 +413,10 @@ not work. `appointment` keeps the exact times promised to the customer (`start_a
 the actual times (`actual_start_at`, `actual_end_at`, null until the job starts and completes);
 only the ledger is quantised. The unique index `uq_appointment_booking` on `(vehicle_id,
 customer_id, start_at, kind)` covers every status, and it is global across dealerships. The
-outbox rows are written with each booking and transition and not published: no relay exists yet.
-`ix_appointment_sweep` on `(status, start_at)` serves the sweeper's query for CONFIRMED appointments past their grace period, so a tick is an index range scan, not a table scan.
+outbox rows are written with each booking and transition and nothing publishes them: `published_at`
+stays `NULL`. `ix_appointment_sweep` on `(status, start_at)` serves the sweeper's query for
+`CONFIRMED` appointments past their grace period, so a tick is an index range scan, not a table
+scan.
 
 The fixture creates the setup rows, the customers and the ledger's cells; the application inserts
 `appointment`, `appointment_event` and `outbox` rows, updates `appointment` rows on every
