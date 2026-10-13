@@ -31,11 +31,12 @@ func TestLoadConfig_ReadsEveryVariable(t *testing.T) {
 		"SHUTDOWN_TIMEOUT":       "3s",
 		"NO_SHOW_GRACE":          "45m",
 		"NO_SHOW_SWEEP_INTERVAL": "1s",
+		"CORS_ALLOWED_ORIGINS":   "*",
 	}))
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	want := Config{Addr: ":9000", DSN: "u:p@tcp(db:3306)/x", ServiceName: "sched-test", OTelExporter: ExporterOTLP, ShutdownTimeout: 3 * time.Second,
+	want := Config{Addr: ":9000", DSN: "u:p@tcp(db:3306)/x", ServiceName: "sched-test", OTelExporter: ExporterOTLP, ShutdownTimeout: 3 * time.Second, CORSOrigins: "*",
 		NoShowGrace: 45 * time.Minute, NoShowSweepInterval: time.Second}
 	if cfg != want {
 		t.Errorf("got %+v, want %+v", cfg, want)

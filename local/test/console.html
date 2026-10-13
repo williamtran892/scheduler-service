@@ -1,0 +1,1039 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workshop Console</title>
+<!--
+  Workshop Console: a standalone page for driving the Scheduler Appointments API by hand.
+  Open this file in a browser while the service runs (make up, or make db-up + make run).
+  The API base URL is editable in the header and defaults to http://localhost:8080.
+  The fixture ids below mirror local/mysql/data.sql. The service has no list endpoint, so
+  the board shows the appointments this page has booked or looked up (kept in localStorage).
+-->
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #66707c; --line: #e2e5ea;
+    --soft: #f0f2f5; --accent: #2f5bd3; --accent-ink: #ffffff; --danger: #c2372e; --ok: #1f8a4c;
+    --warn: #b7791f;
+    --s-confirmed: #2f5bd3; --s-checked: #0f8b8d; --s-progress: #c77c0e; --s-completed: #1f8a4c;
+    --s-cancelled: #8a929c; --s-noshow: #c2372e;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111418; --panel: #191d23; --ink: #e6e9ee; --muted: #9aa3ae; --line: #2b313a;
+      --soft: #222830; --accent: #6d8ff0; --accent-ink: #0d1117; --danger: #ef6f66; --ok: #4cc283;
+      --warn: #e0a84a;
+      --s-confirmed: #6d8ff0; --s-checked: #3cc0c2; --s-progress: #e0a84a; --s-completed: #4cc283;
+      --s-cancelled: #7d8691; --s-noshow: #ef6f66;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  code, .mono { font-family: var(--mono); font-size: 12.5px; }
+
+  header { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; gap: 12px 20px;
+           align-items: center; padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .2px; }
+  header .grow { flex: 1; }
+  header label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
+  .health { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--s-cancelled); }
+  .dot.up { background: var(--ok); } .dot.down { background: var(--danger); }
+
+  main { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 16px; padding: 16px 20px 40px; }
+  @media (max-width: 980px) { main { grid-template-columns: minmax(0, 1fr); padding-inline: 16px; } }
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  section.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  section.panel > h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted);
+                       margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  section.panel > h2 .grow { flex: 1; }
+  .hint { color: var(--muted); font-size: 13px; }
+
+  .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+  .field > span { font-size: 12px; color: var(--muted); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > .field { flex: 1 1 120px; }
+  input, select, textarea { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
+  textarea { resize: vertical; min-height: 54px; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); border-color: var(--accent); }
+  .checks { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; font-size: 13px; }
+  .checks label { display: flex; gap: 5px; align-items: center; }
+
+  .btn { border: 1px solid var(--line); background: var(--soft); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .btn.small { padding: 3px 8px; font-size: 12.5px; }
+  .btn.ghost { background: transparent; }
+  .btn:disabled { opacity: .5; cursor: default; }
+
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
+          letter-spacing: .3px; color: #fff; background: var(--s-cancelled); white-space: nowrap; }
+  .st-CONFIRMED { --c: var(--s-confirmed); } .st-CHECKED_IN { --c: var(--s-checked); }
+  .st-IN_PROGRESS { --c: var(--s-progress); } .st-COMPLETED { --c: var(--s-completed); }
+  .st-CANCELLED { --c: var(--s-cancelled); } .st-NO_SHOW { --c: var(--s-noshow); }
+  .pill[class*="st-"] { background: var(--c); }
+  .code-pill { font-family: var(--mono); font-size: 11.5px; padding: 1px 6px; border-radius: 4px; background: var(--soft); border: 1px solid var(--line); }
+  .http { font-family: var(--mono); font-weight: 700; font-size: 12px; }
+  .http.ok { color: var(--ok); } .http.err { color: var(--danger); } .http.net { color: var(--warn); }
+
+  /* Board */
+  .board-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; background: transparent; padding: 5px 10px; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: var(--accent-ink); }
+  .board-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .board { position: relative; min-width: 760px; }
+  .board.wide { min-width: 1500px; }
+  .brow { display: grid; grid-template-columns: 120px 1fr; border-bottom: 1px solid var(--line); min-height: 38px; }
+  .brow:last-child { border-bottom: 0; }
+  .brow.group > div { background: var(--soft); font-size: 11.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); padding: 3px 8px; min-height: 0; }
+  .brow .lab { padding: 8px; font-size: 13px; border-right: 1px solid var(--line); background: var(--panel); position: sticky; left: 0; z-index: 2; }
+  .brow .lab small { display: block; color: var(--muted); font-size: 11px; }
+  .track { position: relative; cursor: crosshair;
+           background-image: repeating-linear-gradient(to right, var(--line) 0 1px, transparent 1px calc(100% / var(--quarters))); }
+  .track .hourline { position: absolute; top: 0; bottom: 0; width: 1px; background: color-mix(in srgb, var(--muted) 45%, transparent); }
+  .ticks { position: relative; height: 22px; }
+  .ticks span { position: absolute; top: 3px; font-size: 11px; color: var(--muted); transform: translateX(-50%); }
+  .claim { position: absolute; top: 4px; bottom: 4px; border-radius: 5px; background: color-mix(in srgb, var(--c) 18%, transparent);
+           border: 1px dashed color-mix(in srgb, var(--c) 60%, transparent); }
+  .appt { position: absolute; top: 7px; bottom: 7px; border-radius: 4px; background: var(--c); color: #fff; font-size: 11px;
+          padding: 2px 5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; z-index: 1; line-height: 18px; }
+  .appt.faded { opacity: .45; background-image: repeating-linear-gradient(45deg, transparent 0 5px, rgba(255,255,255,.25) 5px 10px); }
+  .appt.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .nowline { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--danger); z-index: 3; pointer-events: none; }
+  .ghost-slot { position: absolute; top: 3px; bottom: 3px; border: 2px solid var(--accent); border-radius: 4px; pointer-events: none; z-index: 2; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 12px; color: var(--muted); align-items: center; }
+  .legend i { display: inline-block; width: 12px; height: 10px; border-radius: 2px; background: var(--c); margin-right: 4px; vertical-align: -1px; }
+  .legend i.claimkey { background: transparent; border: 1px dashed var(--muted); }
+
+  /* Tracked list */
+  .tracked { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow: auto; }
+  .titem { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 5px 8px;
+           border-radius: 6px; cursor: pointer; border: 1px solid transparent; font-size: 13px; }
+  .titem:hover { background: var(--soft); }
+  .titem.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .titem small { color: var(--muted); }
+
+  /* Detail */
+  .detail-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .detail-head .id { font-family: var(--mono); font-size: 12.5px; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px 16px; margin-bottom: 12px; }
+  .facts div > span { display: block; font-size: 11.5px; color: var(--muted); }
+  .facts div > b { font-weight: 500; overflow-wrap: anywhere; }
+  .two { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 1200px) { .two { grid-template-columns: minmax(0, 1fr); } }
+  .sm-wrap { border: 1px solid var(--line); border-radius: 8px; padding: 6px; overflow-x: auto; }
+  .sm-wrap svg { display: block; width: 100%; min-width: 520px; height: auto; }
+  .sm-node rect { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+  .sm-node text { fill: var(--muted); font-size: 11.5px; font-weight: 600; text-anchor: middle; dominant-baseline: central; }
+  .sm-node.cur rect { fill: var(--c); stroke: var(--c); }
+  .sm-node.cur text { fill: #fff; }
+  .sm-node.next rect { stroke: var(--c); stroke-dasharray: 4 3; }
+  .sm-node.next text { fill: var(--ink); }
+  .sm-edge { stroke: var(--line); stroke-width: 1.5; fill: none; }
+  .sm-edge.live { stroke: var(--accent); stroke-width: 2; }
+  .sm-elabel { font-size: 10.5px; fill: var(--muted); text-anchor: middle; }
+  .sm-elabel.live { fill: var(--accent); font-weight: 600; cursor: pointer; }
+  #sm-arrow path { fill: var(--line); } #sm-arrow-live path { fill: var(--accent); }
+
+  .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0 10px; }
+  .tabs button { border: 1px solid var(--line); background: transparent; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 13px; }
+  .tabs button.allowed { border-color: var(--accent); color: var(--accent); }
+  .tabs button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .notice { font-size: 12.5px; padding: 7px 10px; border-radius: 6px; margin-bottom: 10px; background: var(--soft); border-left: 3px solid var(--muted); }
+  .notice.warn { border-left-color: var(--warn); }
+  .notice.err { border-left-color: var(--danger); }
+  .notice.ok { border-left-color: var(--ok); }
+
+  .events { list-style: none; margin: 0; padding: 0 0 0 14px; border-left: 2px solid var(--line); }
+  .events li { position: relative; margin: 0 0 10px 0; padding-left: 8px; }
+  .events li::before { content: ""; position: absolute; left: -21px; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--muted)); border: 2px solid var(--panel); }
+  .events .meta { color: var(--muted); font-size: 12px; }
+  details.payload summary { cursor: pointer; font-size: 12px; color: var(--accent); }
+  pre { margin: 6px 0 0; padding: 8px; background: var(--soft); border-radius: 6px; overflow: auto; max-height: 320px; font-family: var(--mono); font-size: 12px; }
+
+  /* Scenarios */
+  .scenario { border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; margin-bottom: 8px; }
+  .scenario .top { display: flex; gap: 8px; align-items: flex-start; }
+  .scenario .top div { flex: 1; }
+  .scenario b { font-size: 13px; font-weight: 600; }
+  .scenario p { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); }
+  .scenario .out { margin-top: 8px; font-size: 12.5px; }
+  .verdict { font-weight: 700; } .verdict.yes { color: var(--ok); } .verdict.no { color: var(--warn); }
+
+  /* Log */
+  .log { display: flex; flex-direction: column; gap: 4px; max-height: 560px; overflow: auto; }
+  .lentry { border: 1px solid var(--line); border-radius: 6px; }
+  .lentry > summary { display: grid; grid-template-columns: 50px 46px minmax(0,1fr) auto auto; gap: 8px; align-items: center;
+                      padding: 5px 8px; cursor: pointer; list-style: none; font-size: 12.5px; }
+  .lentry > summary::-webkit-details-marker { display: none; }
+  .lentry > summary .path { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lentry > summary .meta { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+  .lentry .body { padding: 0 8px 8px; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 8px; }
+  @media (max-width: 760px) { .lentry .body { grid-template-columns: minmax(0,1fr); } }
+  .lentry .body h4 { margin: 4px 0 0; font-size: 11.5px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+  .empty { padding: 18px; text-align: center; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Workshop Console</h1>
+  <span class="health" id="health"><span class="dot"></span><span>checking…</span></span>
+  <span class="grow"></span>
+  <label>API <input id="baseUrl" size="24" spellcheck="false"></label>
+  <label title="Sent as X-Channel on every request. Customer channels see less and cannot run staff actions.">
+    Channel
+    <select id="channel">
+      <option>ADVISOR_CONSOLE</option><option>CALL_CENTRE</option><option>INTEGRATION</option>
+      <option>CUSTOMER_WEB</option><option>CUSTOMER_APP</option>
+    </select>
+  </label>
+</header>
+
+<main>
+  <div class="col">
+    <section class="panel">
+      <h2>Book an appointment</h2>
+      <form id="bookForm" autocomplete="off">
+        <div class="field"><span>Dealership</span><select id="bDealer"></select></div>
+        <div class="field"><span>Service type</span><select id="bService"></select></div>
+        <div class="row">
+          <div class="field"><span>Customer</span><select id="bCustomer"></select></div>
+          <div class="field"><span>Vehicle</span><select id="bVehicle"></select></div>
+        </div>
+        <div class="row">
+          <div class="field"><span>Date</span><input type="date" id="bDate"></div>
+          <div class="field"><span>Start (dealership time)</span><select id="bTime"></select></div>
+        </div>
+        <div class="field"><span>Kind</span>
+          <select id="bKind"><option>WAITER</option><option>DROP_OFF</option><option>LOANER</option></select>
+        </div>
+        <div class="checks">
+          <label><input type="checkbox" id="bWaiting"> waiting</label>
+          <label><input type="checkbox" id="bCourtesy"> courtesy car</label>
+          <label><input type="checkbox" id="bCollect"> collection &amp; delivery</label>
+        </div>
+        <div class="field"><span>Customer request notes</span><input id="bReqNotes" placeholder="e.g. rattle from the rear"></div>
+        <div class="field"><span>Internal notes (staff channels only)</span><input id="bNotes"></div>
+        <div class="hint" id="bPreview" style="margin-bottom:10px"></div>
+        <button class="btn primary" type="submit">POST /appointments</button>
+      </form>
+      <div id="bookResult" style="margin-top:10px"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Try a behaviour</h2>
+      <p class="hint" style="margin-top:0">Each one sends real requests, using the booking form's dealership, date and time. Every request shows up in the log.</p>
+      <div id="scenarios"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Tracked appointments <span class="grow"></span>
+        <button class="btn small ghost" id="refreshAll" title="GET every tracked appointment">Refresh</button>
+        <button class="btn small ghost" id="clearTracked">Clear</button>
+      </h2>
+      <form id="lookupForm" class="row" style="margin-bottom:8px">
+        <input id="lookupId" placeholder="Look up an appointment id" style="flex:1" spellcheck="false">
+        <button class="btn small" type="submit">GET</button>
+      </form>
+      <div class="tracked" id="tracked"></div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="panel">
+      <h2>Workshop board <span class="grow"></span><span class="hint" style="text-transform:none;letter-spacing:0" id="boardTz"></span></h2>
+      <div class="board-bar">
+        <div class="seg" id="dealerSeg"></div>
+        <button class="btn small" id="dayPrev">◀</button>
+        <input type="date" id="boardDate">
+        <button class="btn small" id="dayNext">▶</button>
+        <button class="btn small ghost" id="dayToday">Today</button>
+      </div>
+      <div class="board-scroll"><div class="board" id="board"></div></div>
+      <div class="legend" id="legend"></div>
+      <p class="hint" style="margin:6px 0 0">Click an empty part of a row to set the booking time. The dashed box is the claimed run of ledger cells, buffers included (staff channels only); the solid bar is the customer's appointment time.</p>
+    </section>
+
+    <section class="panel" id="detailPanel">
+      <h2>Appointment <span class="grow"></span>
+        <button class="btn small ghost" id="detailRefresh" hidden>Refresh</button>
+      </h2>
+      <div id="detail"><div class="empty">Book or select an appointment to see its state and lifecycle actions.</div></div>
+    </section>
+
+    <section class="panel">
+      <h2>Request log <span class="grow"></span>
+        <label class="hint" style="text-transform:none;letter-spacing:0;display:flex;gap:4px;align-items:center"><input type="checkbox" id="logHideGets"> hide GETs</label>
+        <button class="btn small ghost" id="clearLog">Clear</button>
+      </h2>
+      <div class="log" id="log"><div class="empty">No requests yet.</div></div>
+    </section>
+  </div>
+</main>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------------------------
+// Fixture: mirrors local/mysql/data.sql.
+// ---------------------------------------------------------------------------------------------
+const DEALERS = [
+  { id: "d0000000-0000-4000-8000-000000000001", code: "MAN01", name: "Manchester Central", tz: "Europe/London",
+    window: [7, 19], gridHours: [7, 17], gridUtc: true,
+    bays: [
+      { id: "b0000000-0000-4000-8000-000000000001", name: "Bay 1", type: "GENERAL" },
+      { id: "b0000000-0000-4000-8000-000000000002", name: "Bay 2", type: "MOT" },
+      { id: "b0000000-0000-4000-8000-000000000003", name: "Bay 3", type: "EV_HV" } ],
+    techs: [
+      { id: "e0000000-0000-4000-8000-000000000001", name: "Sam",   skills: "General, EV HV L3" },
+      { id: "e0000000-0000-4000-8000-000000000002", name: "Priya", skills: "General, MOT tester" },
+      { id: "e0000000-0000-4000-8000-000000000003", name: "Lee",   skills: "General (F-gas expired)" } ] },
+  { id: "d0000000-0000-4000-8000-000000000002", code: "LDS01", name: "Leeds North", tz: "Europe/London",
+    window: [0, 24], gridHours: [0, 24], gridUtc: true,
+    bays:  [ { id: "b0000000-0000-4000-8000-000000000011", name: "Bay L1", type: "GENERAL" } ],
+    techs: [ { id: "e0000000-0000-4000-8000-000000000011", name: "Jo", skills: "General" } ] },
+];
+const SERVICES = [
+  { id: "5e000000-0000-4000-8000-000000000001", code: "INTERIM",    name: "Interim Service",          dur: 45,  before: 0,  after: 0,  online: true,  bays: "GENERAL, MOT", skill: "General" },
+  { id: "5e000000-0000-4000-8000-000000000002", code: "MAJOR",      name: "Major Service",            dur: 90,  before: 15, after: 15, online: true,  bays: "GENERAL",      skill: "General" },
+  { id: "5e000000-0000-4000-8000-000000000003", code: "MOT",        name: "MOT Test",                 dur: 45,  before: 0,  after: 0,  online: true,  bays: "MOT",          skill: "MOT tester" },
+  { id: "5e000000-0000-4000-8000-000000000004", code: "EV_MAJOR",   name: "EV Major Service",         dur: 120, before: 15, after: 15, online: true,  bays: "EV_HV",        skill: "EV HV L3" },
+  { id: "5e000000-0000-4000-8000-000000000005", code: "EV_CHECK",   name: "EV Battery Health Check",  dur: 30,  before: 0,  after: 0,  online: true,  bays: "GENERAL, EV_HV", skill: "EV HV L3" },
+  { id: "5e000000-0000-4000-8000-000000000006", code: "DIAGNOSTIC", name: "Diagnostic Investigation", dur: 50,  before: 0,  after: 0,  online: false, bays: "GENERAL",      skill: "General" },
+  { id: "5e000000-0000-4000-8000-000000000007", code: "AIRCON",     name: "Air Conditioning Service", dur: 30,  before: 0,  after: 0,  online: true,  bays: "GENERAL",      skill: "F-gas" },
+];
+const CUSTOMERS = [
+  { id: "c0000000-0000-4000-8000-000000000001", name: "Alice", vehicle: "f0000000-0000-4000-8000-000000000001", reg: "YK21 ABC", car: "Volkswagen ID.4" },
+  { id: "c0000000-0000-4000-8000-000000000002", name: "Bob",   vehicle: "f0000000-0000-4000-8000-000000000002", reg: "BD70 XYZ", car: "Ford Focus" },
+];
+for (let i = 101; i <= 120; i++) {
+  const n = String(i - 100).padStart(2, "0");
+  CUSTOMERS.push({ id: "c0000000-0000-4000-8000-000000000" + i, name: "Customer " + n,
+                   vehicle: "f0000000-0000-4000-8000-000000000" + i, reg: "TEST " + n, car: "Toyota Yaris" });
+}
+const STATUSES = ["CONFIRMED", "CHECKED_IN", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW"];
+// The state machine of internal/scheduling/enums.go, with the operation that takes each edge.
+const EDGES = [
+  { from: "CONFIRMED",   to: "CHECKED_IN",  op: "check-in" },
+  { from: "CONFIRMED",   to: "CANCELLED",   op: "cancel" },
+  { from: "CONFIRMED",   to: "NO_SHOW",     op: "no-show" },
+  { from: "NO_SHOW",     to: "CHECKED_IN",  op: "check-in", label: "late arrival" },
+  { from: "CHECKED_IN",  to: "IN_PROGRESS", op: "start" },
+  { from: "CHECKED_IN",  to: "CANCELLED",   op: "cancel" },
+  { from: "IN_PROGRESS", to: "COMPLETED",   op: "complete" },
+];
+const OPS = ["reschedule", "check-in", "start", "complete", "cancel", "no-show"];
+const OP_FROM = { "reschedule": ["CONFIRMED"] };
+for (const e of EDGES) (OP_FROM[e.op] ||= []).push(e.from);
+
+const dealerById = id => DEALERS.find(d => d.id === id);
+const serviceById = id => SERVICES.find(s => s.id === id);
+const customerById = id => CUSTOMERS.find(c => c.id === id);
+
+// ---------------------------------------------------------------------------------------------
+// Small helpers
+// ---------------------------------------------------------------------------------------------
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pad = n => String(n).padStart(2, "0");
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("wsc." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("wsc." + k, JSON.stringify(v)); } catch {} },
+};
+
+// Offset of tz at the instant ms, in minutes east of UTC.
+function tzOffset(tz, ms) {
+  const part = new Intl.DateTimeFormat("en-GB", { timeZone: tz, timeZoneName: "longOffset" })
+    .formatToParts(new Date(ms)).find(p => p.type === "timeZoneName").value; // "GMT", "GMT+01:00"
+  const m = part.match(/GMT([+-])(\d{2}):?(\d{2})?/);
+  return m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] || 0)) : 0;
+}
+// The UTC instant of a wall-clock time in tz.
+function wallToMs(dateStr, minutes, tz) {
+  const [y, mo, d] = dateStr.split("-").map(Number);
+  const guess = Date.UTC(y, mo - 1, d, 0, minutes);
+  let ms = guess - tzOffset(tz, guess) * 60000;
+  ms = guess - tzOffset(tz, ms) * 60000;
+  return ms;
+}
+const fmtOffset = min => (min < 0 ? "-" : "+") + pad(Math.floor(Math.abs(min) / 60)) + ":" + pad(Math.abs(min) % 60);
+// RFC 3339 for a wall-clock time in tz, written with tz's offset.
+function wallToIso(dateStr, minutes, tz) {
+  const ms = wallToMs(dateStr, minutes, tz);
+  return `${dateStr}T${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}:00${fmtOffset(tzOffset(tz, ms))}`;
+}
+function nowIso(tz) {
+  const ms = Date.now(), off = tzOffset(tz, ms), d = new Date(ms + off * 60000);
+  return d.toISOString().slice(0, 19) + fmtOffset(off);
+}
+const todayIn = tz => new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date());
+const addDays = (dateStr, n) => { const d = new Date(dateStr + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const fmtTime = (iso, tz) => iso ? new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit" }).format(new Date(iso)) : "—";
+const fmtDateTime = (iso, tz) => iso ? new Intl.DateTimeFormat("en-GB", { timeZone: tz, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(iso)) : "—";
+const hhmm = m => pad(Math.floor(m / 60)) + ":" + pad(m % 60);
+const shortId = id => id ? id.slice(0, 8) : "";
+
+// ---------------------------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------------------------
+const state = {
+  base: store.get("base", "http://localhost:8080"),
+  channel: store.get("channel", "ADVISOR_CONSOLE"),
+  dealerId: store.get("dealer", DEALERS[0].id),
+  date: null,
+  tracked: new Map(store.get("tracked", []).map(id => [id, null])),
+  selected: null,
+  tab: null,
+  log: [],
+};
+const saveTracked = () => store.set("tracked", [...state.tracked.keys()]);
+const dealer = () => dealerById(state.dealerId);
+
+// ---------------------------------------------------------------------------------------------
+// HTTP: every call goes through api(), which records it in the log.
+// ---------------------------------------------------------------------------------------------
+let logSeq = 0;
+async function api(method, path, body, opts = {}) {
+  const channel = opts.channel || state.channel;
+  const url = state.base.replace(/\/+$/, "") + path;
+  const headers = { "X-Channel": channel, "Accept": "application/json" };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const entry = { seq: ++logSeq, method, path, channel, req: body, at: new Date(), tag: opts.tag };
+  const t0 = performance.now();
+  let res;
+  try {
+    const r = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    const text = await r.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+    res = { status: r.status, ok: r.ok, data, location: r.headers.get("Location") };
+  } catch (err) {
+    res = { status: 0, ok: false, data: null, network: String(err) };
+  }
+  entry.ms = Math.round(performance.now() - t0);
+  Object.assign(entry, { status: res.status, res: res.data, network: res.network, location: res.location });
+  state.log.unshift(entry);
+  if (state.log.length > 200) state.log.length = 200;
+  renderLog();
+  if (res.network) setHealth(false, "unreachable");
+  return res;
+}
+
+function problemText(res) {
+  if (res.network) return `Network error: ${res.network}. Is the service running on ${state.base}, and does the browser allow this cross-origin call?`;
+  const p = res.data || {};
+  let t = `${res.status} ${p.code || ""}${p.title ? " (" + p.title + ")" : ""}`;
+  if (p.detail) t += `: ${p.detail}`;
+  if (p.errors?.length) t += " [" + p.errors.map(e => `${e.field}: ${e.message}`).join("; ") + "]";
+  return t;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Health
+// ---------------------------------------------------------------------------------------------
+function setHealth(up, text) {
+  const h = $("health");
+  h.querySelector(".dot").className = "dot " + (up ? "up" : "down");
+  h.querySelector("span:last-child").textContent = text;
+}
+async function checkHealth() {
+  try {
+    const r = await fetch(state.base.replace(/\/+$/, "") + "/healthz");
+    const j = await r.json().catch(() => ({}));
+    setHealth(r.ok, r.ok ? "service up" : `healthz ${r.status} ${j.status || ""}`);
+  } catch {
+    setHealth(false, "unreachable");
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Booking form
+// ---------------------------------------------------------------------------------------------
+function fillSelect(sel, items, value) {
+  sel.innerHTML = items.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join("");
+  if (value != null && items.some(([v]) => v === value)) sel.value = value;
+}
+function gridMinutes(d, dateStr) {
+  // The ledger has cells for these UTC hours; offer the wall-clock starts that fall inside them.
+  const out = [];
+  const startMs = wallToMs(dateStr, 0, d.tz);
+  const fromUtc = Date.parse(dateStr + "T00:00:00Z") + d.gridHours[0] * 3600e3;
+  const toUtc = Date.parse(dateStr + "T00:00:00Z") + d.gridHours[1] * 3600e3;
+  for (let m = 0; m < 24 * 60; m += 15) {
+    const ms = startMs + m * 60000;
+    if (ms >= fromUtc && ms < toUtc) out.push(m);
+  }
+  return out;
+}
+function refreshTimeOptions(keep) {
+  const d = dealerById($("bDealer").value), dateStr = $("bDate").value;
+  const mins = gridMinutes(d, dateStr);
+  const cur = keep ?? Number($("bTime").value);
+  fillSelect($("bTime"), mins.map(m => [String(m), hhmm(m)]), String(mins.includes(cur) ? cur : (mins.includes(600) ? 600 : mins[0])));
+  updatePreview();
+}
+function bookBody(overrides = {}) {
+  const d = dealerById($("bDealer").value);
+  const minutes = overrides.minutes ?? Number($("bTime").value);
+  const dateStr = overrides.date ?? $("bDate").value;
+  const req = {};
+  if ($("bWaiting").checked) req.waiting = true;
+  if ($("bCourtesy").checked) req.courtesyCar = true;
+  if ($("bCollect").checked) req.collectionAndDelivery = true;
+  if ($("bReqNotes").value) req.notes = $("bReqNotes").value;
+  const body = {
+    dealershipId: d.id, serviceTypeId: $("bService").value, customerId: $("bCustomer").value,
+    vehicleId: $("bVehicle").value, startAt: wallToIso(dateStr, minutes, d.tz), kind: $("bKind").value,
+  };
+  if (Object.keys(req).length) body.customerRequests = req;
+  if ($("bNotes").value) body.notes = $("bNotes").value;
+  delete overrides.minutes; delete overrides.date;
+  return Object.assign(body, overrides);
+}
+function updatePreview() {
+  const s = serviceById($("bService").value);
+  if (!s || !$("bTime").value) return;
+  const m = Number($("bTime").value);
+  const claim = `${hhmm(m - s.before)}–${hhmm(m + s.dur + s.after)}`;
+  $("bPreview").innerHTML = `${esc(s.name)}: ${s.dur} min on a ${esc(s.bays)} bay with a ${esc(s.skill)} technician. ` +
+    `Customer time ${hhmm(m)}–${hhmm(m + s.dur)}` + (s.before || s.after ? `, cells claimed ${claim} (buffers ${s.before}/${s.after})` : "") +
+    (s.online ? "" : `. <b>Not bookable online</b>: customer channels get 422.`);
+  renderBoard();
+}
+function initBookForm() {
+  fillSelect($("bDealer"), DEALERS.map(d => [d.id, `${d.code} · ${d.name}`]), state.dealerId);
+  fillSelect($("bService"), SERVICES.map(s => [s.id, `${s.code} · ${s.name} (${s.dur}m)${s.online ? "" : " · staff only"}`]));
+  fillSelect($("bCustomer"), CUSTOMERS.map(c => [c.id, c.name]));
+  fillSelect($("bVehicle"), CUSTOMERS.map(c => [c.vehicle, `${c.reg} · ${c.car}`]));
+  $("bCustomer").onchange = () => { $("bVehicle").value = customerById($("bCustomer").value).vehicle; };
+  $("bDealer").onchange = () => { setDealer($("bDealer").value); };
+  $("bDate").onchange = () => { setDate($("bDate").value); };
+  $("bTime").onchange = updatePreview;
+  $("bService").onchange = updatePreview;
+  $("bookForm").onsubmit = async e => {
+    e.preventDefault();
+    const res = await book(bookBody());
+    $("bookResult").innerHTML = res.ok
+      ? `<div class="notice ok">${res.status === 201 ? "201 Created" : res.status} · ${esc(res.data.id)}</div>`
+      : `<div class="notice err">${esc(problemText(res))}</div>`;
+  };
+}
+async function book(body, opts) {
+  const res = await api("POST", "/appointments", body, opts);
+  if (res.ok && res.data?.id) { track(res.data); select(res.data.id, false); }
+  return res;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tracking and selection
+// ---------------------------------------------------------------------------------------------
+function track(appt) {
+  const prev = state.tracked.get(appt.id);
+  if (prev?.events && !appt.events) appt.events = prev.events;
+  state.tracked.set(appt.id, appt);
+  saveTracked();
+  renderTracked(); renderBoard();
+  if (state.selected === appt.id) renderDetail();
+}
+async function fetchAppt(id, withEvents = true, opts) {
+  const res = await api("GET", `/appointments/${encodeURIComponent(id)}${withEvents ? "?include=events" : ""}`, undefined, opts);
+  if (res.ok) track(res.data);
+  else if (res.status === 404 && state.tracked.has(id)) { state.tracked.set(id, { id, missing: true }); renderTracked(); renderDetail(); }
+  return res;
+}
+function select(id, fetch = true) {
+  state.selected = id; state.tab = null;
+  const a = state.tracked.get(id);
+  if (a?.startAt && a.dealershipId) {
+    const d = dealerById(a.dealershipId);
+    if (d) { setDate(todayInZoneOf(a.startAt, d.tz), true); setDealer(d.id); }
+  }
+  renderTracked(); renderDetail(); renderBoard();
+  if (fetch) fetchAppt(id);
+}
+const todayInZoneOf = (iso, tz) => new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(iso));
+
+function renderTracked() {
+  const el = $("tracked");
+  if (!state.tracked.size) { el.innerHTML = `<div class="empty">Nothing tracked yet.</div>`; return; }
+  const items = [...state.tracked.entries()].sort((a, b) => (b[1]?.startAt || "").localeCompare(a[1]?.startAt || ""));
+  el.innerHTML = items.map(([id, a]) => {
+    if (!a) return `<div class="titem" data-id="${esc(id)}"><span class="pill">…</span><span class="mono">${esc(shortId(id))}</span><small>loading</small></div>`;
+    if (a.missing) return `<div class="titem" data-id="${esc(id)}"><span class="pill st-NO_SHOW">404</span><span class="mono">${esc(shortId(id))}</span><small>not found</small></div>`;
+    const d = dealerById(a.dealershipId);
+    return `<div class="titem ${state.selected === id ? "sel" : ""}" data-id="${esc(id)}">
+      <span class="pill st-${a.status}">${a.status}</span>
+      <span>${esc(a.vehicle?.registration)} · ${esc(a.serviceType?.code)} <small>${esc(a.customer?.displayName)}</small></span>
+      <small>${esc(d?.code || "")} ${fmtDateTime(a.startAt, d?.tz || "UTC")}</small></div>`;
+  }).join("");
+  el.querySelectorAll(".titem").forEach(n => n.onclick = () => select(n.dataset.id));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Board
+// ---------------------------------------------------------------------------------------------
+function setDealer(id) {
+  state.dealerId = id; store.set("dealer", id);
+  $("bDealer").value = id;
+  refreshTimeOptions();
+  renderDealerSeg(); renderBoard();
+}
+function setDate(dateStr, quiet) {
+  state.date = dateStr;
+  $("boardDate").value = dateStr; $("bDate").value = dateStr;
+  refreshTimeOptions();
+  if (!quiet) renderBoard();
+}
+function renderDealerSeg() {
+  $("dealerSeg").innerHTML = DEALERS.map(d => `<button data-id="${d.id}" class="${d.id === state.dealerId ? "on" : ""}">${d.code}</button>`).join("");
+  $("dealerSeg").querySelectorAll("button").forEach(b => b.onclick = () => setDealer(b.dataset.id));
+}
+function renderBoard() {
+  const d = dealer(); if (!d || !state.date) return;
+  const [h0, h1] = d.window, span = (h1 - h0) * 60;
+  const dayStart = wallToMs(state.date, h0 * 60, d.tz);
+  const pos = ms => ((ms - dayStart) / 60000) / span * 100;
+  const board = $("board");
+  board.className = "board" + (span > 14 * 60 ? " wide" : "");
+  board.style.setProperty("--quarters", String(span / 15));
+  $("boardTz").textContent = `${d.name} · ${d.tz} (UTC${fmtOffset(tzOffset(d.tz, dayStart))})`;
+
+  const hourLines = []; const ticks = [];
+  for (let h = h0; h <= h1; h++) {
+    const p = (h - h0) * 60 / span * 100;
+    if (h < h1) hourLines.push(`<div class="hourline" style="left:${p}%"></div>`);
+    ticks.push(`<span style="left:${p}%">${pad(h % 24)}:00</span>`);
+  }
+  const appts = [...state.tracked.values()].filter(a => a?.startAt && a.dealershipId === d.id);
+  const clip = (l, r) => { const L = Math.max(0, l), R = Math.min(100, r); return R > L ? [L, R - L] : null; };
+  const blocks = (resourceId, kind) => appts.filter(a => (kind === "bay" ? a.serviceBay?.id : a.technician?.id) === resourceId).map(a => {
+    let html = "";
+    const cells = a.cells?.[kind];
+    if (cells && a.status !== "CANCELLED") {
+      const c = clip(pos(Date.parse(cells.from)), pos(Date.parse(cells.to)));
+      if (c) html += `<div class="claim st-${a.status}" style="left:${c[0]}%;width:${c[1]}%" title="${cells.cells} cells claimed"></div>`;
+    }
+    const c = clip(pos(Date.parse(a.startAt)), pos(Date.parse(a.endAt)));
+    if (c) {
+      const faded = ["CANCELLED", "NO_SHOW"].includes(a.status) ? " faded" : "";
+      const label = kind === "bay" ? `${a.vehicle?.registration} · ${a.serviceType?.code}` : `${a.serviceType?.code} · ${a.vehicle?.registration}`;
+      html += `<div class="appt st-${a.status}${faded}${state.selected === a.id ? " sel" : ""}" data-id="${a.id}" style="left:${c[0]}%;width:${c[1]}%"
+        title="${esc(a.status)} · ${esc(a.serviceType?.name)} · ${esc(a.customer?.displayName)} · ${fmtTime(a.startAt, d.tz)}–${fmtTime(a.endAt, d.tz)}">${esc(label)}</div>`;
+    }
+    return html;
+  }).join("");
+
+  // Where the booking form would land, outlined on every row.
+  let ghost = "";
+  const s = serviceById($("bService").value);
+  if ($("bDealer").value === d.id && $("bDate").value === state.date && s && $("bTime").value) {
+    const m = Number($("bTime").value);
+    const c = clip(pos(wallToMs(state.date, m, d.tz)), pos(wallToMs(state.date, m + s.dur, d.tz)));
+    if (c) ghost = `<div class="ghost-slot" style="left:${c[0]}%;width:${c[1]}%" title="Booking form start"></div>`;
+  }
+  let now = "";
+  const np = pos(Date.now());
+  if (np >= 0 && np <= 100) now = `<div class="nowline" style="left:${np}%" title="now"></div>`;
+
+  const row = (lab, sub, inner) => `<div class="brow"><div class="lab">${esc(lab)}<small>${esc(sub)}</small></div><div class="track">${hourLines.join("")}${inner}${ghost}${now}</div></div>`;
+  board.innerHTML =
+    `<div class="brow"><div class="lab"></div><div class="ticks">${ticks.join("")}</div></div>` +
+    `<div class="brow group"><div>Bays</div><div></div></div>` +
+    d.bays.map(b => row(b.name, b.type, blocks(b.id, "bay"))).join("") +
+    `<div class="brow group"><div>Technicians</div><div></div></div>` +
+    d.techs.map(t => row(t.name, t.skills, blocks(t.id, "technician"))).join("");
+
+  board.querySelectorAll(".appt").forEach(n => n.onclick = e => { e.stopPropagation(); select(n.dataset.id); });
+  board.querySelectorAll(".track").forEach(t => t.onclick = e => {
+    const r = t.getBoundingClientRect();
+    const mins = Math.floor(((e.clientX - r.left) / r.width * span) / 15) * 15 + h0 * 60;
+    if ($("bDealer").value !== d.id) { $("bDealer").value = d.id; }
+    $("bDate").value = state.date;
+    refreshTimeOptions(mins);
+  });
+
+  $("legend").innerHTML = STATUSES.map(s => `<span class="st-${s}"><i></i>${s}</span>`).join("") +
+    `<span><i class="claimkey"></i>claimed cells</span><span style="color:var(--danger)">│ now</span>`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Appointment detail: facts, state machine, lifecycle actions, events
+// ---------------------------------------------------------------------------------------------
+const NODE_POS = { CONFIRMED: [80, 105], CHECKED_IN: [260, 105], IN_PROGRESS: [440, 105], COMPLETED: [620, 105],
+                   CANCELLED: [170, 28], NO_SHOW: [80, 185] };
+const NW = 116, NH = 32;
+function edgePoint([x, y], [tx, ty]) {
+  const dx = tx - x, dy = ty - y;
+  const t = Math.min((NW / 2 + 3) / Math.abs(dx || 1e-9), (NH / 2 + 3) / Math.abs(dy || 1e-9));
+  return [x + dx * t, y + dy * t];
+}
+function stateMachineSvg(cur) {
+  const live = EDGES.filter(e => e.from === cur);
+  const nextSet = new Set(live.map(e => e.to));
+  let edges = "", labels = "";
+  for (const e of EDGES) {
+    const a = NODE_POS[e.from], b = NODE_POS[e.to];
+    const p1 = edgePoint(a, b), p2 = edgePoint(b, a);
+    const isLive = e.from === cur;
+    edges += `<line class="sm-edge${isLive ? " live" : ""}" x1="${p1[0]}" y1="${p1[1]}" x2="${p2[0]}" y2="${p2[1]}" marker-end="url(#sm-arrow${isLive ? "-live" : ""})"/>`;
+    const mx = (p1[0] + p2[0]) / 2, my = (p1[1] + p2[1]) / 2;
+    const offY = Math.abs(p1[1] - p2[1]) < 1 ? -6 : 0, offX = Math.abs(p1[0] - p2[0]) < 1 ? 30 : (p2[1] < p1[1] ? 26 : -26);
+    labels += `<text class="sm-elabel${isLive ? " live" : ""}" data-op="${e.op}" x="${mx + (offY ? 0 : offX)}" y="${my + offY}">${e.label || e.op}</text>`;
+  }
+  const nodes = STATUSES.map(s => {
+    const [x, y] = NODE_POS[s];
+    const cls = s === cur ? "cur" : nextSet.has(s) ? "next" : "";
+    return `<g class="sm-node st-${s} ${cls}"><rect x="${x - NW / 2}" y="${y - NH / 2}" width="${NW}" height="${NH}" rx="7"/><text x="${x}" y="${y}">${s}</text></g>`;
+  }).join("");
+  // Reschedule keeps CONFIRMED: a loop above the node.
+  const loopLive = cur === "CONFIRMED";
+  const loop = `<path class="sm-edge${loopLive ? " live" : ""}" d="M 50 ${105 - NH / 2 - 2} C 30 50, 70 52, 66 ${105 - NH / 2 - 3}" marker-end="url(#sm-arrow${loopLive ? "-live" : ""})"/>
+    <text class="sm-elabel${loopLive ? " live" : ""}" data-op="reschedule" x="40" y="58">reschedule</text>`;
+  return `<svg viewBox="0 0 700 210" role="img" aria-label="Appointment state machine, current status ${cur}">
+    <defs>
+      <marker id="sm-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker>
+      <marker id="sm-arrow-live" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker>
+    </defs>${edges}${loop}${nodes}${labels}</svg>`;
+}
+
+function renderDetail() {
+  const el = $("detail");
+  const a = state.selected && state.tracked.get(state.selected);
+  $("detailRefresh").hidden = !state.selected;
+  if (!state.selected) { el.innerHTML = `<div class="empty">Book or select an appointment to see its state and lifecycle actions.</div>`; return; }
+  if (!a) { el.innerHTML = `<div class="empty">Loading ${esc(state.selected)}…</div>`; return; }
+  if (a.missing) { el.innerHTML = `<div class="notice err">GET ${esc(a.id)} answered 404. The database may have been reset (make down / db-reset).</div>
+    <button class="btn small" id="untrack">Stop tracking it</button>`;
+    $("untrack").onclick = () => { state.tracked.delete(a.id); saveTracked(); state.selected = null; renderTracked(); renderDetail(); renderBoard(); };
+    return; }
+  const d = dealerById(a.dealershipId) || { tz: a.dealership?.timezone || "UTC" };
+  const tz = d.tz;
+  const allowed = OPS.filter(op => OP_FROM[op].includes(a.status));
+  if (!state.tab) state.tab = allowed[0] || "cancel";
+  const cr = a.customerRequests || {};
+  const crText = [cr.waiting && "waiting", cr.courtesyCar && "courtesy car", cr.collectionAndDelivery && "collection & delivery", cr.notes && `“${cr.notes}”`].filter(Boolean).join(", ") || "—";
+  const cellText = k => a.cells?.[k] ? `${fmtTime(a.cells[k].from, tz)}–${fmtTime(a.cells[k].to, tz)} · ${a.cells[k].cells} cells` : (a.cells ? "none held" : "hidden from customer channels");
+  const fact = (k, v) => `<div><span>${k}</span><b>${v}</b></div>`;
+
+  el.innerHTML = `
+    <div class="detail-head">
+      <span class="pill st-${a.status}">${a.status}</span>
+      <span class="id">${esc(a.id)}</span>
+      <button class="btn small ghost" id="copyId">copy</button>
+      <span class="hint">version <b>${a.version}</b> · booked via ${esc(a.channel)}</span>
+    </div>
+    <div class="facts">
+      ${fact("Service", `${esc(a.serviceType?.name)} <span class="hint">(${a.serviceType?.durationMinutes}m)</span>`)}
+      ${fact("Customer · vehicle", `${esc(a.customer?.displayName)} · ${esc(a.vehicle?.registration)} <span class="hint">${esc([a.vehicle?.make, a.vehicle?.model].filter(Boolean).join(" "))}</span>`)}
+      ${fact("When", `${fmtDateTime(a.startAt, tz)}–${fmtTime(a.endAt, tz)}`)}
+      ${fact("Dealership", `${esc(a.dealership?.code)} · ${esc(a.dealership?.name)}`)}
+      ${fact("Bay", `${esc(a.serviceBay?.name)} <span class="hint">${esc(a.serviceBay?.type)}</span>`)}
+      ${fact("Technician", esc(a.technician?.displayName || techLabel(a)))}
+      ${fact("Bay cells", cellText("bay"))}
+      ${fact("Technician cells", cellText("technician"))}
+      ${fact("Kind", esc(a.kind))}
+      ${fact("Customer requests", esc(crText))}
+      ${fact("Actual start · end", `${fmtTime(a.actualStartAt, tz)} · ${fmtTime(a.actualEndAt, tz)}`)}
+      ${fact("Internal notes", a.notes ? esc(a.notes) : (a.cells ? "—" : "hidden"))}
+    </div>
+    <div class="two">
+      <div>
+        <div class="sm-wrap">${stateMachineSvg(a.status)}</div>
+        <div class="tabs" id="opTabs">${OPS.map(op => `<button data-op="${op}" class="${allowed.includes(op) ? "allowed" : ""} ${state.tab === op ? "on" : ""}">${op}</button>`).join("")}</div>
+        <div id="opForm"></div>
+      </div>
+      <div>
+        <h3 style="font-size:13px;margin:0 0 8px;color:var(--muted)">Event history</h3>
+        ${renderEvents(a, tz)}
+      </div>
+    </div>`;
+  $("copyId").onclick = () => navigator.clipboard?.writeText(a.id);
+  el.querySelectorAll("#opTabs button, .sm-elabel.live").forEach(b => b.onclick = () => { state.tab = b.dataset.op; renderDetail(); });
+  renderOpForm(a, tz, allowed);
+}
+
+// A customer channel gets the technician's id without the name; the fixture knows it.
+function techLabel(a) {
+  const t = dealerById(a.dealershipId)?.techs.find(t => t.id === a.technician?.id);
+  return t ? `${t.name} (name hidden from this channel)` : a.technician?.id || "—";
+}
+
+function renderEvents(a, tz) {
+  if (!a.events) return `<div class="hint">Not loaded. <button class="btn small" id="loadEvents">GET ?include=events</button></div>`;
+  if (!a.events.length) return `<div class="hint">No events.</div>`;
+  return `<ul class="events">` + a.events.map(ev => `
+    <li class="st-${STATUSES.includes(ev.type) ? ev.type : ev.type === "STARTED" ? "IN_PROGRESS" : "CONFIRMED"}">
+      <b>${esc(ev.type)}</b>
+      <div class="meta">${fmtDateTime(ev.occurredAt, tz)} · ${esc(ev.actor)}${ev.channel ? " · " + esc(ev.channel) : ""}</div>
+      ${ev.payload ? `<details class="payload"><summary>payload</summary><pre>${esc(JSON.stringify(ev.payload, null, 2))}</pre></details>` : ""}
+    </li>`).join("") + `</ul>`;
+}
+
+function renderOpForm(a, tz, allowed) {
+  const op = state.tab, d = dealerById(a.dealershipId);
+  const el = $("opForm");
+  const warn = allowed.includes(op) ? "" :
+    `<div class="notice warn">The state machine does not allow <b>${op}</b> from ${a.status}${OP_FROM[op] ? ` (only from ${OP_FROM[op].join(" or ")})` : ""}. Sending it shows the server's refusal.</div>`;
+  const late = op === "check-in" && a.status === "NO_SHOW" ? `<div class="notice">Late arrival: the check-in claims fresh cells starting at the current grid cell.</div>` : "";
+  let extra = "";
+  if (op === "reschedule") {
+    const date = todayInZoneOf(a.startAt, tz);
+    extra = `<div class="row">
+        <div class="field"><span>New date (blank time keeps the start)</span><input type="date" id="rDate" value="${date}"></div>
+        <div class="field"><span>New start</span><select id="rTime"><option value="">keep</option>${gridMinutes(d, date).map(m => `<option value="${m}">${hhmm(m)}</option>`).join("")}</select></div>
+      </div>
+      <div class="row">
+        <div class="field"><span>Bay (reassign)</span><select id="rBay"><option value="">keep / any</option>${d.bays.map(b => `<option value="${b.id}">${esc(b.name)} · ${b.type}</option>`).join("")}</select></div>
+        <div class="field"><span>Technician (reassign)</span><select id="rTech"><option value="">keep / any</option>${d.techs.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select></div>
+      </div>`;
+    setTimeout(() => {
+      const sel = $("rTime"); if (!sel) return;
+      $("rDate").onchange = () => {
+        sel.innerHTML = `<option value="">keep</option>` + gridMinutes(d, $("rDate").value).map(m => `<option value="${m}">${hhmm(m)}</option>`).join("");
+      };
+    });
+  } else if (op === "check-in") {
+    extra = `<div class="row"><div class="field"><span>Mileage</span><input type="number" id="ciMileage" min="0" placeholder="optional"></div></div>
+      <div class="field"><span>Additional concerns</span><input id="ciConcerns" placeholder="optional"></div>`;
+  } else if (op === "start" || op === "complete") {
+    const f = op === "start" ? "startedAt" : "completedAt";
+    extra = `<div class="field"><span>${f} (optional, RFC 3339; blank uses the server clock)</span>
+      <div class="row"><input id="tAt" style="flex:1" placeholder="${nowIso(tz)}" spellcheck="false"><button type="button" class="btn small" id="tNow">now</button></div></div>`;
+  }
+  el.innerHTML = `${warn}${late}<form id="opFormEl">
+    ${extra}
+    <div class="row">
+      <div class="field" style="flex:0 1 130px"><span>expectedVersion</span><input type="number" id="opVersion" value="${a.version}"></div>
+      <div class="field"><span>Reason</span><input id="opReason" placeholder="optional"></div>
+    </div>
+    <button class="btn primary" type="submit">POST /${op}</button>
+    <div id="opResult" style="margin-top:10px"></div></form>`;
+  if ($("tNow")) $("tNow").onclick = () => { $("tAt").value = nowIso(tz); };
+  $("opFormEl").onsubmit = async e => {
+    e.preventDefault();
+    const body = { expectedVersion: $("opVersion").value === "" ? undefined : Number($("opVersion").value) };
+    if ($("opReason").value) body.reason = $("opReason").value;
+    if (op === "reschedule") {
+      if ($("rTime").value !== "") body.startAt = wallToIso($("rDate").value, Number($("rTime").value), tz);
+      else if ($("rDate").value !== todayInZoneOf(a.startAt, tz)) {
+        const m = Math.round((Date.parse(a.startAt) - wallToMs(todayInZoneOf(a.startAt, tz), 0, tz)) / 60000);
+        body.startAt = wallToIso($("rDate").value, m, tz);
+      }
+      if ($("rBay").value) body.serviceBayId = $("rBay").value;
+      if ($("rTech").value) body.technicianId = $("rTech").value;
+    } else if (op === "check-in") {
+      if ($("ciMileage").value !== "") body.mileage = Number($("ciMileage").value);
+      if ($("ciConcerns").value) body.additionalConcerns = $("ciConcerns").value;
+    } else if (op === "start" && $("tAt").value) body.startedAt = $("tAt").value;
+    else if (op === "complete" && $("tAt").value) body.completedAt = $("tAt").value;
+    const res = await transition(a.id, op, body);
+    const out = $("opResult");
+    if (out) out.innerHTML = res.ok ? `<div class="notice ok">${res.status} · now ${esc(res.data.status)}, version ${res.data.version}</div>`
+                                    : `<div class="notice err">${esc(problemText(res))}</div>`;
+  };
+}
+
+async function transition(id, op, body, opts) {
+  const res = await api("POST", `/appointments/${id}/${op}`, body, opts);
+  if (res.ok) { track(res.data); await fetchAppt(id, true, opts); }
+  return res;
+}
+
+document.addEventListener("click", e => {
+  if (e.target.id === "loadEvents" && state.selected) fetchAppt(state.selected);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Request log
+// ---------------------------------------------------------------------------------------------
+function renderLog() {
+  const el = $("log");
+  const items = state.log.filter(l => !($("logHideGets").checked && l.method === "GET"));
+  if (!items.length) { el.innerHTML = `<div class="empty">No requests yet.</div>`; return; }
+  el.innerHTML = items.map(l => {
+    const cls = l.network ? "net" : l.status < 400 ? "ok" : "err";
+    const code = l.res?.code ? `<span class="code-pill">${esc(l.res.code)}</span>` : (l.res?.status && STATUSES.includes(l.res.status) ? `<span class="pill st-${l.res.status}">${l.res.status}</span>` : "");
+    return `<details class="lentry">
+      <summary><span class="http ${cls}">${l.network ? "ERR" : l.status}</span><b class="mono">${l.method}</b>
+        <span class="path">${esc(l.path)}</span>${code}<span class="meta">${esc(l.channel)} · ${l.ms}ms · ${l.at.toLocaleTimeString()}</span></summary>
+      <div class="body">
+        <div><h4>Request · X-Channel: ${esc(l.channel)}</h4><pre>${l.req === undefined ? "(no body)" : esc(JSON.stringify(l.req, null, 2))}</pre>
+          <button class="btn small ghost" data-curl="${l.seq}" style="margin-top:4px">copy as curl</button></div>
+        <div><h4>Response ${l.network ? "" : l.status}${l.location ? " · Location: " + esc(l.location) : ""}</h4><pre>${l.network ? esc(l.network) : esc(typeof l.res === "string" ? l.res : JSON.stringify(l.res, null, 2))}</pre></div>
+      </div></details>`;
+  }).join("");
+  el.querySelectorAll("[data-curl]").forEach(b => b.onclick = () => {
+    const l = state.log.find(x => x.seq === Number(b.dataset.curl));
+    let c = `curl -sS -X ${l.method} '${state.base.replace(/\/+$/, "")}${l.path}' -H 'X-Channel: ${l.channel}'`;
+    if (l.req !== undefined) c += ` -H 'Content-Type: application/json' -d '${JSON.stringify(l.req).replace(/'/g, "'\\''")}'`;
+    navigator.clipboard?.writeText(c);
+    b.textContent = "copied";
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Scenarios: each demonstrates one behaviour of the contract with real requests.
+// ---------------------------------------------------------------------------------------------
+const svcByCode = code => SERVICES.find(s => s.code === code).id;
+const verdict = (ok, text) => `<span class="verdict ${ok ? "yes" : "no"}">${ok ? "✓ as expected" : "✗ unexpected"}</span> ${text}`;
+const needSelected = () => {
+  const a = state.selected && state.tracked.get(state.selected);
+  if (!a?.version) throw new Error("Select an appointment first.");
+  return a;
+};
+const SCENARIOS = [
+  { title: "Race for one slot",
+    text: "Five customers book an MOT at the same start at once. Only Bay 2 and Priya can do MOTs, so exactly one wins and the rest are refused.",
+    async run() {
+      const d = dealerById($("bDealer").value);
+      if (d.code !== "MAN01") throw new Error("Pick MAN01 in the booking form: only it has an MOT bay.");
+      const racers = CUSTOMERS.filter(c => c.reg.startsWith("TEST")).slice(0, 5);
+      const results = await Promise.all(racers.map(c => api("POST", "/appointments",
+        bookBody({ serviceTypeId: svcByCode("MOT"), customerId: c.id, vehicleId: c.vehicle, customerRequests: undefined, notes: undefined }))));
+      results.filter(r => r.ok).forEach(r => track(r.data));
+      const won = results.filter(r => r.ok).length;
+      const codes = results.filter(r => !r.ok).map(r => r.data?.code || r.status);
+      return verdict(won <= 1, `${won} confirmed, ${codes.length} refused` + (codes.length ? ` (${[...new Set(codes)].join(", ")})` : "") +
+        (won === 0 ? ". Nobody won: the slot was already taken; try another time." : ""));
+    } },
+  { title: "Retry the same booking",
+    text: "Submit the booking form twice. The natural key (vehicle, customer, start, kind) makes the retry return the same appointment.",
+    async run() {
+      const body = bookBody();
+      const r1 = await book(body), r2 = await book(body);
+      if (!r1.ok) return verdict(false, `first attempt: ${esc(problemText(r1))}`);
+      return verdict(r2.ok && r2.data.id === r1.data.id, `${r1.status} then ${r2.status}, ids ${shortId(r1.data?.id)} / ${shortId(r2.data?.id)}`);
+    } },
+  { title: "Same key, different service",
+    text: "Book the form, then the same vehicle, customer, start and kind with another service type: 409 DUPLICATE_BOOKING, naming the existing one.",
+    async run() {
+      const body = bookBody();
+      const r1 = await book(body);
+      if (!r1.ok) return verdict(false, `first booking: ${esc(problemText(r1))}`);
+      const other = body.serviceTypeId === svcByCode("INTERIM") ? svcByCode("MAJOR") : svcByCode("INTERIM");
+      const r2 = await api("POST", "/appointments", { ...body, serviceTypeId: other });
+      return verdict(r2.data?.code === "DUPLICATE_BOOKING", esc(problemText(r2)) + (r2.data?.existing ? ` · existing ${shortId(r2.data.existing.id || "")}` : ""));
+    } },
+  { title: "Nobody qualified",
+    text: "Air conditioning needs F-gas; Lee's certificate expired yesterday. 422 NO_QUALIFIED_TECHNICIAN.",
+    async run() {
+      const r = await api("POST", "/appointments", bookBody({ serviceTypeId: svcByCode("AIRCON") }));
+      if (r.ok) track(r.data);
+      return verdict(r.data?.code === "NO_QUALIFIED_TECHNICIAN", esc(r.ok ? `${r.status} booked` : problemText(r)));
+    } },
+  { title: "Staff-only service online",
+    text: "A customer channel books a Diagnostic Investigation, which is not bookable online. 422 SERVICE_NOT_BOOKABLE_ONLINE.",
+    async run() {
+      const r = await api("POST", "/appointments", bookBody({ serviceTypeId: svcByCode("DIAGNOSTIC"), notes: undefined }), { channel: "CUSTOMER_WEB" });
+      if (r.ok) track(r.data);
+      return verdict(r.data?.code === "SERVICE_NOT_BOOKABLE_ONLINE", esc(r.ok ? `${r.status} booked` : problemText(r)));
+    } },
+  { title: "Off the grid",
+    text: "Start 7 minutes past the chosen time. The ledger is on a 15-minute grid, so 422 OFF_GRID_START.",
+    async run() {
+      const r = await api("POST", "/appointments", bookBody({ minutes: Number($("bTime").value) + 7 }));
+      if (r.ok) track(r.data);
+      return verdict(r.data?.code === "OFF_GRID_START", esc(r.ok ? `${r.status} booked` : problemText(r)));
+    } },
+  { title: "Outside opening hours",
+    text: "Book MAN01 at 05:00 dealership time, before its first cell. 422 OUTSIDE_OPENING_HOURS.",
+    async run() {
+      const man = DEALERS[0];
+      const r = await api("POST", "/appointments", bookBody({ dealershipId: man.id, startAt: wallToIso($("bDate").value, 5 * 60, man.tz) }));
+      if (r.ok) track(r.data);
+      return verdict(r.data?.code === "OUTSIDE_OPENING_HOURS", esc(r.ok ? `${r.status} booked` : problemText(r)));
+    } },
+  { title: "Stale version",
+    text: "Cancel the selected appointment with expectedVersion one ahead of its real version. 409 VERSION_CONFLICT, and nothing changes.",
+    async run() {
+      const a = needSelected();
+      const r = await api("POST", `/appointments/${a.id}/cancel`, { expectedVersion: a.version + 1, reason: "stale version demo" });
+      if (r.ok) { track(r.data); fetchAppt(a.id); }
+      return verdict(r.data?.code === "VERSION_CONFLICT", esc(r.ok ? `${r.status}: it was cancelled!` : problemText(r)));
+    } },
+  { title: "Customer tries a staff action",
+    text: "Check in the selected appointment through CUSTOMER_APP. Lifecycle actions are staff-only: 403 FORBIDDEN.",
+    async run() {
+      const a = needSelected();
+      const r = await api("POST", `/appointments/${a.id}/check-in`, { expectedVersion: a.version }, { channel: "CUSTOMER_APP" });
+      if (r.ok) { track(r.data); fetchAppt(a.id); }
+      return verdict(r.data?.code === "FORBIDDEN", esc(r.ok ? `${r.status}: checked in!` : problemText(r)));
+    } },
+  { title: "Customer view vs staff view",
+    text: "GET the selected appointment as CUSTOMER_WEB and ADVISOR_CONSOLE and list what the customer does not see.",
+    async run() {
+      const a = needSelected();
+      const [c, s] = await Promise.all([
+        api("GET", `/appointments/${a.id}?include=events`, undefined, { channel: "CUSTOMER_WEB" }),
+        api("GET", `/appointments/${a.id}?include=events`, undefined, { channel: "ADVISOR_CONSOLE" })]);
+      if (!c.ok || !s.ok) return verdict(false, esc(problemText(c.ok ? s : c)));
+      const hidden = [];
+      if (s.data.cells && !c.data.cells) hidden.push("cells");
+      if (s.data.notes && !c.data.notes) hidden.push("notes");
+      if (s.data.technician?.displayName && !c.data.technician?.displayName) hidden.push("technician name");
+      if (s.data.events?.some(e => e.payload) && !c.data.events?.some(e => e.payload)) hidden.push("event payloads");
+      return verdict(true, `hidden from the customer: ${hidden.join(", ") || "nothing (no staff-only data on this one)"}`);
+    } },
+];
+function renderScenarios() {
+  $("scenarios").innerHTML = SCENARIOS.map((s, i) => `<div class="scenario">
+    <div class="top"><div><b>${esc(s.title)}</b><p>${esc(s.text)}</p></div><button class="btn small" data-sc="${i}">Run</button></div>
+    <div class="out" id="sc-out-${i}" hidden></div></div>`).join("");
+  $("scenarios").querySelectorAll("[data-sc]").forEach(b => b.onclick = async () => {
+    const i = Number(b.dataset.sc), out = $("sc-out-" + i);
+    b.disabled = true; out.hidden = false; out.innerHTML = `<span class="hint">running…</span>`;
+    try { out.innerHTML = await SCENARIOS[i].run(); }
+    catch (err) { out.innerHTML = `<span class="verdict no">${esc(err.message)}</span>`; }
+    finally { b.disabled = false; }
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------------------------
+function boot() {
+  $("baseUrl").value = state.base;
+  $("baseUrl").onchange = () => { state.base = $("baseUrl").value.trim() || "http://localhost:8080"; store.set("base", state.base); checkHealth(); };
+  $("channel").value = state.channel;
+  $("channel").onchange = () => { state.channel = $("channel").value; store.set("channel", state.channel); };
+
+  initBookForm();
+  const today = todayIn(DEALERS[0].tz);
+  $("bDate").min = $("boardDate").min = today;
+  $("bDate").max = $("boardDate").max = addDays(today, 13);
+  setDate(today, true);
+  setDealer(state.dealerId);
+  $("boardDate").onchange = () => setDate($("boardDate").value);
+  $("dayPrev").onclick = () => setDate(addDays(state.date, -1));
+  $("dayNext").onclick = () => setDate(addDays(state.date, 1));
+  $("dayToday").onclick = () => setDate(todayIn(dealer().tz));
+
+  $("lookupForm").onsubmit = async e => {
+    e.preventDefault();
+    const id = $("lookupId").value.trim(); if (!id) return;
+    const res = await fetchAppt(id);
+    if (res.ok) { select(res.data.id, false); $("lookupId").value = ""; }
+  };
+  $("refreshAll").onclick = () => [...state.tracked.keys()].forEach(id => fetchAppt(id, id === state.selected));
+  $("clearTracked").onclick = () => { state.tracked.clear(); saveTracked(); state.selected = null; renderTracked(); renderBoard(); renderDetail(); };
+  $("detailRefresh").onclick = () => state.selected && fetchAppt(state.selected);
+  $("clearLog").onclick = () => { state.log = []; renderLog(); };
+  $("logHideGets").onchange = renderLog;
+
+  renderScenarios(); renderTracked(); renderDetail(); renderLog();
+  checkHealth(); setInterval(checkHealth, 15000);
+  setInterval(renderBoard, 60000); // keeps the now line moving
+  [...state.tracked.keys()].forEach(id => fetchAppt(id, false));
+}
+boot();
+</script>
+</body>
+</html>

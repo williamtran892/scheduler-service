@@ -26,6 +26,7 @@ type Config struct {
 	ServiceName     string        // OTEL_SERVICE_NAME
 	OTelExporter    string        // OTEL_EXPORTER: none, stdout or otlp
 	ShutdownTimeout time.Duration // SHUTDOWN_TIMEOUT
+	CORSOrigins     string        // CORS_ALLOWED_ORIGINS: comma-separated origins or "*"; empty is off
 
 	// The no-show sweeper.
 	NoShowGrace         time.Duration // NO_SHOW_GRACE: start plus this, passed, is a no-show
@@ -41,6 +42,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		ServiceName:     orDefault(getenv("OTEL_SERVICE_NAME"), "scheduler"),
 		OTelExporter:    orDefault(getenv("OTEL_EXPORTER"), ExporterNone),
 		ShutdownTimeout: 10 * time.Second,
+		CORSOrigins:     getenv("CORS_ALLOWED_ORIGINS"),
 	}
 
 	switch cfg.OTelExporter {

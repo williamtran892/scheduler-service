@@ -69,8 +69,9 @@ func run(logger log.Logger) error {
 	store := schedmysql.New(db)
 	schedulingSvc := newSchedulingService(db, store, logger)
 	handler := app.NewHandler(app.Deps{
-		DB:         db,
-		Scheduling: schedendpoint.Specs(schedulingSvc),
+		DB:          db,
+		Scheduling:  schedendpoint.Specs(schedulingSvc),
+		CORSOrigins: cfg.CORSOrigins,
 	})
 	srv := &http.Server{Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 

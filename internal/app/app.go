@@ -16,10 +16,13 @@ import (
 type Deps struct {
 	DB         platform.Pinger
 	Scheduling []schedendpoint.EndpointSpec
+	// CORSOrigins is CORS_ALLOWED_ORIGINS; empty leaves CORS off.
+	CORSOrigins string
 }
 
-// NewHandler registers every route on one mux and wraps it in otelhttp, which opens
-// one server span and records the HTTP metrics for each request.
+// NewHandler registers every route on one mux, wraps it in the CORS middleware (a no-op unless
+// origins are configured) and then in otelhttp, which opens one server span and records the
+// HTTP metrics for each request.
 func NewHandler(d Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", platform.Health(d.DB))
@@ -27,7 +30,7 @@ func NewHandler(d Deps) http.Handler {
 	// so every one encodes its errors with platform.EncodeError.
 	schedendpoint.Register(mux, d.Scheduling, kithttp.ServerErrorEncoder(platform.EncodeError))
 
-	return otelhttp.NewHandler(mux, "http", otelhttp.WithSpanNameFormatter(routeName))
+	return otelhttp.NewHandler(platform.CORS(d.CORSOrigins)(mux), "http", otelhttp.WithSpanNameFormatter(routeName))
 }
 
 // routeName names the server span after the matched mux pattern ("GET /healthz"),

@@ -107,6 +107,7 @@ Everything is read from the environment in `internal/platform/config.go`.
 | `OTEL_EXPORTER` | `none` | `none`, `stdout` or `otlp`. The OTLP exporter reads the standard `OTEL_EXPORTER_OTLP_*` variables |
 | `OTEL_SERVICE_NAME` | `scheduler` | `service.name` resource attribute |
 | `SHUTDOWN_TIMEOUT` | `10s` | Grace period for in-flight requests on SIGINT or SIGTERM |
+| `CORS_ALLOWED_ORIGINS` | empty (CORS off) | Comma-separated origins, or `*` for any, that browsers may call the API from. `docker-compose.yml` sets `*` so [`api/console.html`](./api/console.html), opened from disk, can call the app container |
 | `NO_SHOW_GRACE` | `30m` | A `CONFIRMED` appointment whose start plus this has passed is marked `NO_SHOW` by the sweeper. A Go duration greater than zero |
 | `NO_SHOW_SWEEP_INTERVAL` | `1m` | How often the no-show sweeper runs. A Go duration greater than zero; `docker-compose.yml` sets `1s` for the acceptance suite |
 | `MYSQL_PORT` | `3306` | Host port docker compose publishes MySQL on |
