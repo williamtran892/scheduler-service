@@ -154,8 +154,9 @@ needed.
 - Errors carry enough context to find the cause: `fmt.Errorf("ping MySQL: %w", err)`.
 - Only `platform.EncodeError` maps errors to HTTP status codes. A domain error exposes its
   problem code through `ProblemCode()`, and `platform` looks the status up in one table.
-- A domain root imports only the standard library; domains reach each other through reader
-  interfaces and `adapters` packages (see [System Architecture](./architecture.md)).
+- The Scheduling root imports only the standard library; Scheduling reaches the other domains
+  through the reader interfaces it declares, which `setup/mysql` and `customers/mysql` implement
+  (see [System Architecture](./architecture.md)).
 - Only `internal/scheduling/mysql/ledger.go` writes `time_slot` (`ClaimPair` and `ReleaseCells`);
   a unit test enforces it for production code. It skips `_test.go` files and the `test/` tree,
   where the acceptance suite's `@clock` step backdates cells, and it checks that it still reports

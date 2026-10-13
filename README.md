@@ -135,10 +135,11 @@ creates tables.
 cmd/scheduler/          main: config, logger, OTel, MySQL pool, HTTP server and no-show sweeper in an errgroup
 internal/app/           NewHandler: the one place routes are registered
 internal/platform/      config, clock, ids, MySQL pool, problem-details encoder, health, OTel
-internal/setup/         Workshop Setup (read-only): dealerships, bays, technicians, service types
-internal/customers/     Customer & Vehicle (read-only)
+internal/setup/         Workshop Setup (read-only): mysql implements scheduling.WorkshopReader over
+                        dealerships, bays, technicians, service types
+internal/customers/     Customer & Vehicle (read-only): mysql implements scheduling.CustomerReader
 internal/scheduling/    Scheduling: grid and availability, the claim and release, appointments and
-                        their lifecycle (root, mysql, adapters, service, sweeper)
+                        their lifecycle (root, mysql, service, sweeper)
 local/mysql/            schema.sql and data.sql, the compose init scripts
 features/               Gherkin feature files
 test/acceptance/        godog suite: a black-box HTTP client with relative dates and fixture names;
@@ -152,9 +153,10 @@ specs/                  Spec Kit feature folders (created per feature)
 .specify/               Spec Kit memory, templates and scripts
 ```
 
-Each domain follows the layout of [`docs/design/IMPLEMENTATION_NOTES.md`](./docs/design/IMPLEMENTATION_NOTES.md)
-section 2; `engagement` is added when a feature needs it. [`docs/architecture.md`](./docs/architecture.md)
-describes the packages and their dependency rules.
+Scheduling follows the layout of [`docs/design/IMPLEMENTATION_NOTES.md`](./docs/design/IMPLEMENTATION_NOTES.md)
+section 2; Setup and Customers are only a `mysql` package each for now, and `engagement` is added
+when a feature needs it. [`docs/architecture.md`](./docs/architecture.md) describes the packages
+and their dependency rules.
 
 ## Feature workflow
 

@@ -21,7 +21,6 @@ import (
 	"scheduler/internal/app"
 	customersmysql "scheduler/internal/customers/mysql"
 	"scheduler/internal/platform"
-	"scheduler/internal/scheduling/adapters"
 	schedmysql "scheduler/internal/scheduling/mysql"
 	schedsvc "scheduler/internal/scheduling/service"
 	"scheduler/internal/scheduling/sweeper"
@@ -102,14 +101,11 @@ func run(logger log.Logger) error {
 	return g.Wait()
 }
 
-// newSchedulingService wires the Scheduling service: its store, the adapters over the setup and
-// customers repositories, the real clock and ids, and its middleware, outermost last so tracing
-// runs first.
+// newSchedulingService wires the Scheduling service: its store, the setup and customers
+// repositories as its readers, the real clock and ids, and its middleware, outermost last so
+// tracing runs first.
 func newSchedulingService(db *sql.DB, store *schedmysql.Store, logger log.Logger) schedsvc.Service {
-	workshop := adapters.NewWorkshopReader(setupmysql.New(db))
-	customers := adapters.NewCustomerReader(customersmysql.New(db))
-
-	svc := schedsvc.NewService(store, workshop, customers, platform.RealClock{}, platform.UUIDs{})
+	svc := schedsvc.NewService(store, setupmysql.New(db), customersmysql.New(db), platform.RealClock{}, platform.UUIDs{})
 	svc = schedsvc.LoggingMiddleware(log.With(logger, "component", "scheduling"))(svc)
 	svc = schedsvc.InstrumentingMiddleware(otel.Meter("scheduler"))(svc)
 	return schedsvc.TracingMiddleware(otel.Tracer("scheduler"))(svc)

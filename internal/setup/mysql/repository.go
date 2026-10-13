@@ -4,89 +4,96 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
-	"scheduler/internal/setup"
+	"scheduler/internal/scheduling"
 )
 
-// Repository reads Workshop Setup's tables. It implements setup.Repository.
+// Repository reads Workshop Setup's tables in Scheduling's terms. It implements
+// scheduling.WorkshopReader.
 type Repository struct {
 	db *sql.DB
 }
 
-var _ setup.Repository = (*Repository)(nil)
+var _ scheduling.WorkshopReader = (*Repository)(nil)
 
 // New returns a repository over db.
 func New(db *sql.DB) *Repository { return &Repository{db: db} }
 
-func (r *Repository) Dealership(ctx context.Context, id string) (setup.Dealership, error) {
-	var d setup.Dealership
+func (r *Repository) DealershipConfig(ctx context.Context, dealershipID string) (scheduling.DealershipConfig, error) {
+	var (
+		c  scheduling.DealershipConfig
+		tz zone
+	)
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, code, name, timezone, slot_minutes, booking_horizon_days
-		  FROM dealership WHERE id = ?`, id).
-		Scan(&d.ID, &d.TenantID, &d.Code, &d.Name, &d.Timezone, &d.SlotMinutes, &d.BookingHorizonDays)
+		  FROM dealership WHERE id = ?`, dealershipID).
+		Scan(&c.DealershipID, &c.TenantID, &c.Code, &c.Name, &tz, &c.Grid.SlotMinutes, &c.BookingHorizonDays)
 	if err != nil {
-		return setup.Dealership{}, readError("dealership", id, err)
+		return scheduling.DealershipConfig{}, readError("dealership", dealershipID, err)
 	}
-	return d, nil
+	c.Location = tz.loc
+	return c, nil
 }
 
-func (r *Repository) ServiceType(ctx context.Context, id string) (setup.ServiceType, error) {
-	var st setup.ServiceType
+// Requirement returns the service type with the skills it requires and the bay types it allows,
+// in one query.
+func (r *Repository) Requirement(ctx context.Context, serviceTypeID string) (scheduling.ServiceRequirement, error) {
+	var (
+		req                     scheduling.ServiceRequirement
+		duration, before, after int // minutes
+	)
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, tenant_id, code, name, duration_minutes, buffer_before_minutes, buffer_after_minutes,
-		       online_bookable, active
-		  FROM service_type WHERE id = ?`, id).
-		Scan(&st.ID, &st.TenantID, &st.Code, &st.Name, &st.DurationMinutes, &st.BufferBeforeMinutes,
-			&st.BufferAfterMinutes, &st.OnlineBookable, &st.Active)
+		SELECT st.id, st.tenant_id, st.code, st.name,
+		       st.duration_minutes, st.buffer_before_minutes, st.buffer_after_minutes,
+		       st.online_bookable, st.active,
+		       (SELECT JSON_ARRAYAGG(s.code)
+		          FROM service_type_skill sts JOIN skill s ON s.id = sts.skill_id
+		         WHERE sts.service_type_id = st.id),
+		       (SELECT JSON_ARRAYAGG(bt.bay_type)
+		          FROM service_type_bay_type bt
+		         WHERE bt.service_type_id = st.id)
+		  FROM service_type st WHERE st.id = ?`, serviceTypeID).
+		Scan(&req.ServiceTypeID, &req.TenantID, &req.Code, &req.Name,
+			&duration, &before, &after,
+			&req.OnlineBookable, &req.Active,
+			(*stringList)(&req.RequiredSkills), (*stringList)(&req.AllowedBayTypes))
 	if err != nil {
-		return setup.ServiceType{}, readError("service type", id, err)
+		return scheduling.ServiceRequirement{}, readError("service type", serviceTypeID, err)
 	}
-
-	if st.RequiredSkills, err = r.column(ctx, `
-		SELECT s.code FROM service_type_skill sts JOIN skill s ON s.id = sts.skill_id
-		 WHERE sts.service_type_id = ? ORDER BY s.code`, id); err != nil {
-		return setup.ServiceType{}, readError("skills of service type", id, err)
-	}
-	codes, err := r.column(ctx, `
-		SELECT bay_type FROM service_type_bay_type WHERE service_type_id = ? ORDER BY bay_type`, id)
-	if err != nil {
-		return setup.ServiceType{}, readError("bay types of service type", id, err)
-	}
-	for _, c := range codes {
-		t, err := setup.ParseBayType(c)
-		if err != nil {
-			return setup.ServiceType{}, readError("bay types of service type", id, err)
-		}
-		st.BayTypes = append(st.BayTypes, t)
-	}
-	return st, nil
+	req.Duration = time.Duration(duration) * time.Minute
+	req.BufferBefore = time.Duration(before) * time.Minute
+	req.BufferAfter = time.Duration(after) * time.Minute
+	return req, nil
 }
 
-func (r *Repository) ActiveResources(ctx context.Context, dealershipID, onDate string) ([]setup.ServiceBay, []setup.Technician, error) {
+// Resources returns the ACTIVE bays and the ACTIVE technicians of the dealership, each
+// technician with the skills valid on localDate.
+func (r *Repository) Resources(ctx context.Context, dealershipID, localDate string) ([]scheduling.ServiceBay, []scheduling.Technician, error) {
 	bays, err := r.activeBays(ctx, dealershipID)
 	if err != nil {
-		return nil, nil, readError("bays of dealership", dealershipID, err)
+		return nil, nil, fmt.Errorf("read bays of dealership %s: %w", dealershipID, err)
 	}
-	techs, err := r.activeTechnicians(ctx, dealershipID, onDate)
+	techs, err := r.activeTechnicians(ctx, dealershipID, localDate)
 	if err != nil {
-		return nil, nil, readError("technicians of dealership", dealershipID, err)
+		return nil, nil, fmt.Errorf("read technicians of dealership %s: %w", dealershipID, err)
 	}
 	return bays, techs, nil
 }
 
-func (r *Repository) activeBays(ctx context.Context, dealershipID string) ([]setup.ServiceBay, error) {
+func (r *Repository) activeBays(ctx context.Context, dealershipID string) ([]scheduling.ServiceBay, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, dealership_id, name, type, status FROM service_bay
-		 WHERE dealership_id = ? AND status = ? ORDER BY name`, dealershipID, setup.BayActive)
+		SELECT id, name, type FROM service_bay
+		 WHERE dealership_id = ? AND status = 'ACTIVE' ORDER BY name`, dealershipID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var bays []setup.ServiceBay
+	var bays []scheduling.ServiceBay
 	for rows.Next() {
-		var b setup.ServiceBay
-		if err := rows.Scan(&b.ID, &b.DealershipID, &b.Name, &b.Type, &b.Status); err != nil {
+		var b scheduling.ServiceBay
+		if err := rows.Scan(&b.ID, &b.Name, &b.Type); err != nil {
 			return nil, err
 		}
 		bays = append(bays, b)
@@ -94,95 +101,54 @@ func (r *Repository) activeBays(ctx context.Context, dealershipID string) ([]set
 	return bays, rows.Err()
 }
 
-// activeTechnicians returns the ACTIVE technicians with the skills valid on onDate: valid_from
-// is not after the date and valid_to is null or not before it (design 11.4).
-func (r *Repository) activeTechnicians(ctx context.Context, dealershipID, onDate string) ([]setup.Technician, error) {
+// activeTechnicians returns the skills valid on localDate: valid_from is not after the date and
+// valid_to is null or not before it (design 11.4).
+func (r *Repository) activeTechnicians(ctx context.Context, dealershipID, localDate string) ([]scheduling.Technician, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, dealership_id, display_name, status FROM technician
-		 WHERE dealership_id = ? AND status = ? ORDER BY display_name`, dealershipID, setup.TechnicianActive)
+		SELECT t.id, t.display_name,
+		       (SELECT JSON_ARRAYAGG(s.code)
+		          FROM technician_skill ts JOIN skill s ON s.id = ts.skill_id
+		         WHERE ts.technician_id = t.id
+		           AND ts.valid_from <= ? AND (ts.valid_to IS NULL OR ts.valid_to >= ?))
+		  FROM technician t
+		 WHERE t.dealership_id = ? AND t.status = 'ACTIVE' ORDER BY t.display_name`,
+		localDate, localDate, dealershipID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var techs []setup.Technician
-	index := map[string]int{} // technician id -> position in techs
+	var techs []scheduling.Technician
 	for rows.Next() {
-		var t setup.Technician
-		if err := rows.Scan(&t.ID, &t.DealershipID, &t.DisplayName, &t.Status); err != nil {
+		var t scheduling.Technician
+		if err := rows.Scan(&t.ID, &t.Name, (*stringList)(&t.Skills)); err != nil {
 			return nil, err
 		}
-		index[t.ID] = len(techs)
 		techs = append(techs, t)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	skills, err := r.db.QueryContext(ctx, `
-		SELECT ts.technician_id, s.code
-		  FROM technician_skill ts
-		  JOIN skill s ON s.id = ts.skill_id
-		  JOIN technician t ON t.id = ts.technician_id
-		 WHERE t.dealership_id = ? AND t.status = ?
-		   AND ts.valid_from <= ? AND (ts.valid_to IS NULL OR ts.valid_to >= ?)
-		 ORDER BY s.code`, dealershipID, setup.TechnicianActive, onDate, onDate)
-	if err != nil {
-		return nil, err
-	}
-	defer skills.Close()
-	for skills.Next() {
-		var techID, code string
-		if err := skills.Scan(&techID, &code); err != nil {
-			return nil, err
-		}
-		i, ok := index[techID]
-		if !ok {
-			return nil, fmt.Errorf("skill of unknown technician %s", techID)
-		}
-		techs[i].Skills = append(techs[i].Skills, code)
-	}
-	return techs, skills.Err()
+	return techs, rows.Err()
 }
 
-func (r *Repository) Bay(ctx context.Context, id string) (setup.ServiceBay, error) {
-	var b setup.ServiceBay
+// Bay returns one bay in any status.
+func (r *Repository) Bay(ctx context.Context, id string) (scheduling.ServiceBay, error) {
+	var b scheduling.ServiceBay
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, dealership_id, name, type, status FROM service_bay WHERE id = ?`, id).
-		Scan(&b.ID, &b.DealershipID, &b.Name, &b.Type, &b.Status)
+		SELECT id, name, type FROM service_bay WHERE id = ?`, id).
+		Scan(&b.ID, &b.Name, &b.Type)
 	if err != nil {
-		return setup.ServiceBay{}, readError("bay", id, err)
+		return scheduling.ServiceBay{}, readError("bay", id, err)
 	}
 	return b, nil
 }
 
 // Technician returns one technician in any status, without skills.
-func (r *Repository) Technician(ctx context.Context, id string) (setup.Technician, error) {
-	var t setup.Technician
+func (r *Repository) Technician(ctx context.Context, id string) (scheduling.Technician, error) {
+	var t scheduling.Technician
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, dealership_id, display_name, status FROM technician WHERE id = ?`, id).
-		Scan(&t.ID, &t.DealershipID, &t.DisplayName, &t.Status)
+		SELECT id, display_name FROM technician WHERE id = ?`, id).
+		Scan(&t.ID, &t.Name)
 	if err != nil {
-		return setup.Technician{}, readError("technician", id, err)
+		return scheduling.Technician{}, readError("technician", id, err)
 	}
 	return t, nil
-}
-
-// column runs a query that selects one text column and returns its values.
-func (r *Repository) column(ctx context.Context, query string, args ...any) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []string
-	for rows.Next() {
-		var s string
-		if err := rows.Scan(&s); err != nil {
-			return nil, err
-		}
-		out = append(out, s)
-	}
-	return out, rows.Err()
 }
