@@ -18,7 +18,7 @@ import (
 func registerRaceSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^"([^"]*)" submits the same booking of "([^"]*)" for "([^"]*)" `+dayPattern+` at `+timePattern+` (\d+) times at the same time$`,
 		func(ctx context.Context, who, service, reg, d, hhmm string, n int) error {
-			reqs := make([]*bookingRequest, n)
+			reqs := make([]*preparedRequest, n)
 			for i := range reqs {
 				b, err := newBooking(who, service, reg, d, hhmm)
 				if err != nil {
@@ -77,7 +77,7 @@ func customerRange(first, last string) ([]string, error) {
 }
 
 func (w *world) raceOwnVehicles(ctx context.Context, names []string, service, d string, startOf func(int) string) error {
-	reqs := make([]*bookingRequest, len(names))
+	reqs := make([]*preparedRequest, len(names))
 	for i, name := range names {
 		c, err := customerNamed(name)
 		if err != nil {
@@ -95,7 +95,7 @@ func (w *world) raceOwnVehicles(ctx context.Context, names []string, service, d 
 // race sends every request at once and records each outcome; successful bookings are added to
 // the scenario's appointments, so "the two appointments" and "the successful appointment"
 // steps see them.
-func (w *world) race(ctx context.Context, reqs []*bookingRequest) error {
+func (w *world) race(ctx context.Context, reqs []*preparedRequest) error {
 	results := make([]response, len(reqs))
 	errs := make([]error, len(reqs))
 	release := make(chan struct{})
@@ -148,7 +148,7 @@ func (w *world) exactlyOneSucceeded(ok, failed, status int, code string) error {
 		return fmt.Errorf("%d succeeded and %d received %s, want %d and %d", len(created), len(refused), code, ok, failed)
 	}
 	if ok == 1 {
-		w.record(created[0]) // "the successful appointment"
+		w.selectResponse(created[0]) // "the successful appointment"; race already recorded it
 	}
 	return nil
 }

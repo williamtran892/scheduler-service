@@ -9,8 +9,8 @@ import (
 	"scheduler/internal/scheduling"
 )
 
-// Reschedule moves a CONFIRMED appointment, reusing booking's plan with the appointment as the
-// owner whose cells count as free (design 5.4). The new start is startAt, or the
+// Reschedule moves a CONFIRMED appointment, reusing booking's plan with the appointment's own
+// cells counting as free (design 5.4). The new start is startAt, or the
 // current start for a pure reassign; a named bay or technician restricts the candidates. The
 // appointment's own pair is tried first, with the named resources put in its place.
 func (s *service) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record, error) {
@@ -19,7 +19,7 @@ func (s *service) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record
 			return Record{}, err
 		}
 	}
-	a, err := s.begin(ctx, cmd.TransitionCommand, scheduling.StatusConfirmed)
+	a, err := s.loadForTransition(ctx, cmd.TransitionCommand, scheduling.StatusConfirmed)
 	if err != nil {
 		return Record{}, err
 	}
@@ -32,12 +32,12 @@ func (s *service) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record
 	if cmd.StartAt != nil {
 		p.requested = *cmd.StartAt
 	}
-	p.pinBay, p.pinTech = cmd.ServiceBayID, cmd.TechnicianID
-	if p.pinBay != "" {
-		p.prefer.BayID = p.pinBay
+	p.requiredBayID, p.requiredTechnicianID = cmd.ServiceBayID, cmd.TechnicianID
+	if p.requiredBayID != "" {
+		p.preferredPair.BayID = p.requiredBayID
 	}
-	if p.pinTech != "" {
-		p.prefer.TechID = p.pinTech
+	if p.requiredTechnicianID != "" {
+		p.preferredPair.TechID = p.requiredTechnicianID
 	}
 
 	if p, err = s.validate(p); err != nil {
@@ -60,11 +60,11 @@ func (s *service) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record
 			outbox:  outboxRescheduled,
 			payload: eventPayload{Reason: cmd.Reason, Previous: placementOf(a), New: placementOf(next)},
 			claim:   &newRuns{bayID: pair.BayID, techID: pair.TechID, bay: p.bay, tech: p.tech},
-			release: &scheduling.Keep{
+			releaseExcept: &scheduling.Keep{
 				Bay:        &scheduling.ResourceRun{ResourceID: pair.BayID, Run: p.bay},
 				Technician: &scheduling.ResourceRun{ResourceID: pair.TechID, Run: p.tech},
 			},
-			cells: scheduling.OwnedCells{Bay: cellRange(p.bay), Technician: cellRange(p.tech)},
+			resultingCells: scheduling.OwnedCells{Bay: cellRange(p.bay), Technician: cellRange(p.tech)},
 		})
 	})
 	switch {
@@ -107,11 +107,11 @@ func (s *service) lateArrival(ctx context.Context, cmd TransitionCommand, a sche
 		payload := payload
 		payload.LateArrival, payload.Previous, payload.New = true, placementOf(a), placementOf(next)
 		return s.apply(ctx, cmd, a, next, change{
-			event:   eventCheckedIn,
-			outbox:  outboxCheckedIn,
-			payload: payload,
-			claim:   &newRuns{bayID: pair.BayID, techID: pair.TechID, bay: p.bay, tech: p.tech},
-			cells:   scheduling.OwnedCells{Bay: cellRange(p.bay), Technician: cellRange(p.tech)},
+			event:          eventCheckedIn,
+			outbox:         outboxCheckedIn,
+			payload:        payload,
+			claim:          &newRuns{bayID: pair.BayID, techID: pair.TechID, bay: p.bay, tech: p.tech},
+			resultingCells: scheduling.OwnedCells{Bay: cellRange(p.bay), Technician: cellRange(p.tech)},
 		})
 	})
 	switch {
@@ -123,8 +123,8 @@ func (s *service) lateArrival(ctx context.Context, cmd TransitionCommand, a sche
 	return rec, err
 }
 
-// movePlan is the plan for moving an existing appointment: its dealership and service type, the
-// appointment as the owner whose cells count as free, its id as the shuffle seed, and its current
+// movePlan is the plan for moving an existing appointment: its dealership and service type, its id
+// as the existing appointment whose cells count as free and as the shuffle seed, and its current
 // pair as the preferred one.
 func (s *service) movePlan(ctx context.Context, a scheduling.Appointment, channel scheduling.Channel) (plan, error) {
 	cfg, err := s.workshop.DealershipConfig(ctx, a.DealershipID)
@@ -135,8 +135,12 @@ func (s *service) movePlan(ctx context.Context, a scheduling.Appointment, channe
 	if err != nil {
 		return plan{}, fmt.Errorf("move appointment %s: %w", a.ID, err)
 	}
-	return plan{cfg: cfg, req: req, channel: channel, id: a.ID, owner: a.ID,
-		prefer: scheduling.Candidate{BayID: a.ServiceBayID, TechID: a.TechnicianID}}, nil
+	return plan{
+		cfg: cfg, req: req, channel: channel,
+		appointmentID:         a.ID,
+		existingAppointmentID: a.ID,
+		preferredPair:         scheduling.Candidate{BayID: a.ServiceBayID, TechID: a.TechnicianID},
+	}, nil
 }
 
 // keyOwner answers a 1062 on the booking key of a move: DUPLICATE_BOOKING carrying the

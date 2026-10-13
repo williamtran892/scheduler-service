@@ -31,10 +31,7 @@ type Candidate struct {
 // (design 5.1). Starts are in time order.
 func FeasibleStarts(day DayWindow, g Grid, req ServiceRequirement, bays []ServiceBay, techs []Technician, islands []Island) []time.Time {
 	var starts []time.Time
-	for s := day.From.Truncate(g.Slot()); s.Before(day.To); s = s.Add(g.Slot()) {
-		if s.Before(day.From) {
-			continue
-		}
+	for s := g.Ceil(day.From); s.Before(day.To); s = s.Add(g.Slot()) {
 		bayRun, techRun := req.Runs(s, g)
 		if len(freeBays(bayRun, req, bays, islands)) > 0 && len(freeTechnicians(techRun, req, techs, islands)) > 0 {
 			starts = append(starts, s)

@@ -24,7 +24,7 @@ type ServiceRequirement struct {
 // start - BufferBefore and cover BufferBefore + Duration + BufferAfter, rounded up to whole
 // cells. They are identical in this release (design 5.1).
 func (r ServiceRequirement) Runs(start time.Time, g Grid) (bay, tech CellRun) {
-	first := start.Add(-r.BufferBefore).Truncate(g.Slot()) // the cell the before-buffer begins in
+	first := g.Floor(start.Add(-r.BufferBefore)) // the cell the before-buffer begins in
 	end := start.Add(r.Duration + r.BufferAfter)
 	run := CellRun{First: first, Cells: g.CellsFor(end.Sub(first)), Slot: g.Slot()}
 	return run, run

@@ -13,18 +13,21 @@ import (
 // defaultChannel is the channel a booking or fetch states unless a step says otherwise.
 const defaultChannel = "ADVISOR_CONSOLE"
 
-// bookingRequest is a POST request being built: the JSON body and the X-Channel header, which is
-// empty when the request has none. path is empty for a booking (POST /appointments, the
-// contract's BookAppointmentRequest) and names the route for a prepared transition request.
-type bookingRequest struct {
+// bookingPath is the route of a booking (the contract's BookAppointmentRequest).
+const bookingPath = "/appointments"
+
+// preparedRequest is a POST request being built, for a booking or a lifecycle transition: the JSON
+// body, the X-Channel header, which is empty when the request has none, and the route it is sent
+// to.
+type preparedRequest struct {
 	body    map[string]any
 	channel string
 	path    string
 }
 
-// newBooking builds the default request: dealership MAN01, kind DROP_OFF, channel
-// ADVISOR_CONSOLE, no customer requests and no notes.
-func newBooking(customerName, service, registration, dayPhrase, hhmm string) (*bookingRequest, error) {
+// newBooking builds the default booking request, for POST bookingPath: dealership MAN01, kind
+// DROP_OFF, channel ADVISOR_CONSOLE, no customer requests and no notes.
+func newBooking(customerName, service, registration, dayPhrase, hhmm string) (*preparedRequest, error) {
 	c, err := customerNamed(customerName)
 	if err != nil {
 		return nil, err
@@ -41,7 +44,8 @@ func newBooking(customerName, service, registration, dayPhrase, hhmm string) (*b
 	if err != nil {
 		return nil, err
 	}
-	return &bookingRequest{
+	return &preparedRequest{
+		path: bookingPath,
 		body: map[string]any{
 			"dealershipId":  dealerships["MAN01"],
 			"serviceTypeId": serviceTypeID,
@@ -55,7 +59,7 @@ func newBooking(customerName, service, registration, dayPhrase, hhmm string) (*b
 }
 
 // at sends the booking to dealership code instead of MAN01.
-func (b *bookingRequest) at(code string) error {
+func (b *preparedRequest) at(code string) error {
 	id, err := lookup("dealership", dealerships, code)
 	if err != nil {
 		return err
@@ -66,7 +70,7 @@ func (b *bookingRequest) at(code string) error {
 
 // apply sets the fields of a two-column "with:" table: kind, notes, waiting, courtesyCar,
 // collectionAndDelivery and requestNotes (customerRequests.notes).
-func (b *bookingRequest) apply(table *godog.Table) error {
+func (b *preparedRequest) apply(table *godog.Table) error {
 	requests := map[string]any{}
 	for _, row := range table.Rows {
 		if len(row.Cells) != 2 {
@@ -94,28 +98,24 @@ func (b *bookingRequest) apply(table *godog.Table) error {
 	return nil
 }
 
-func (b *bookingRequest) headers() map[string]string {
+func (b *preparedRequest) headers() map[string]string {
 	if b.channel == "" {
 		return nil
 	}
 	return map[string]string{"X-Channel": b.channel}
 }
 
-// post sends the booking and returns the response without recording it.
-func (w *world) post(ctx context.Context, b *bookingRequest) (response, error) {
+// post sends the prepared request to its route and returns the response without recording it.
+func (w *world) post(ctx context.Context, b *preparedRequest) (response, error) {
 	body, err := json.Marshal(b.body)
 	if err != nil {
 		return response{}, err
 	}
-	path := b.path
-	if path == "" {
-		path = "/appointments"
-	}
-	return w.do(ctx, http.MethodPost, path, body, b.headers())
+	return w.do(ctx, http.MethodPost, b.path, body, b.headers())
 }
 
 // book sends the booking and records the response.
-func (w *world) book(ctx context.Context, b *bookingRequest) error {
+func (w *world) book(ctx context.Context, b *preparedRequest) error {
 	resp, err := w.post(ctx, b)
 	if err != nil {
 		return err
@@ -162,19 +162,19 @@ func registerBookingSteps(sc *godog.ScenarioContext, w *world) {
 			return err
 		})
 	sc.Step(`^the request has "([^"]*)" removed$`, func(field string) error {
-		return w.editPrepared(func(b *bookingRequest) { delete(b.body, field) })
+		return w.editPrepared(func(b *preparedRequest) { delete(b.body, field) })
 	})
 	sc.Step(`^the request has "([^"]*)" set to "([^"]*)"$`, func(field, value string) error {
-		return w.editPrepared(func(b *bookingRequest) { b.body[field] = value })
+		return w.editPrepared(func(b *preparedRequest) { b.body[field] = value })
 	})
 	sc.Step(`^the request has "([^"]*)" set to (-?\d+)$`, func(field string, value int) error {
-		return w.editPrepared(func(b *bookingRequest) { b.body[field] = value })
+		return w.editPrepared(func(b *preparedRequest) { b.body[field] = value })
 	})
 	sc.Step(`^the request has no channel$`, func() error {
-		return w.editPrepared(func(b *bookingRequest) { b.channel = "" })
+		return w.editPrepared(func(b *preparedRequest) { b.channel = "" })
 	})
 	sc.Step(`^the request has no changes$`, func() error {
-		return w.editPrepared(func(*bookingRequest) {})
+		return w.editPrepared(func(*preparedRequest) {})
 	})
 	sc.Step(`^the booking request is sent$`, func(ctx context.Context) error {
 		if w.prepared == nil {
@@ -201,7 +201,7 @@ func registerBookingSteps(sc *godog.ScenarioContext, w *world) {
 	})
 }
 
-func buildBooking(who, service, reg, d, hhmm, dealer, channel string, table *godog.Table) (*bookingRequest, error) {
+func buildBooking(who, service, reg, d, hhmm, dealer, channel string, table *godog.Table) (*preparedRequest, error) {
 	b, err := newBooking(who, service, reg, d, hhmm)
 	if err != nil {
 		return nil, err
@@ -246,7 +246,7 @@ func (w *world) hasBooked(ctx context.Context, who, service, reg, d, hhmm, deale
 
 // bookAs books for a named customer and remembers a confirmed booking as that customer's
 // appointment, for "the appointment of "<customer>"".
-func (w *world) bookAs(ctx context.Context, who string, b *bookingRequest) error {
+func (w *world) bookAs(ctx context.Context, who string, b *preparedRequest) error {
 	if err := w.book(ctx, b); err != nil {
 		return err
 	}
@@ -267,7 +267,7 @@ func (w *world) appointmentOf(who string) (string, error) {
 	return id, nil
 }
 
-func (w *world) editPrepared(edit func(*bookingRequest)) error {
+func (w *world) editPrepared(edit func(*preparedRequest)) error {
 	if w.prepared == nil {
 		return fmt.Errorf("no booking request was prepared")
 	}

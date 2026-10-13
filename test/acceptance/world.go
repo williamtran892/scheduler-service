@@ -73,7 +73,7 @@ type world struct {
 	body   []byte
 	header http.Header
 
-	prepared     *bookingRequest  // built by "prepares a booking" or "a ... request is prepared", edited, then sent
+	prepared     *preparedRequest // built by "prepares a booking" or "a ... request is prepared", edited, then sent
 	current      map[string]any   // "the appointment": the last appointment returned (201 or 200)
 	booked       map[string]any   // the last 201 booking response, for "equals the booking response"
 	appointments []map[string]any // every appointment confirmed in this scenario, in order
@@ -130,18 +130,15 @@ func (w *world) do(ctx context.Context, method, path string, body []byte, header
 	return response{status: resp.StatusCode, header: resp.Header, body: b}, nil
 }
 
-// record makes resp the scenario's last response and, when it carries an appointment,
-// "the appointment".
+// record adds a new exchange to the scenario: resp is selected (see selectResponse) and, when it
+// carries an appointment, enters the history the steps read back (the last record of each
+// appointment, the last booking, the appointments confirmed in order).
 func (w *world) record(resp response) {
-	w.status, w.body, w.header = resp.status, resp.body, resp.header
-	if resp.status != http.StatusOK && resp.status != http.StatusCreated {
+	w.selectResponse(resp)
+	appt := appointmentIn(resp)
+	if appt == nil {
 		return
 	}
-	appt, err := resp.json()
-	if err != nil || appt["id"] == nil {
-		return
-	}
-	w.current = appt
 	if id, ok := appt["id"].(string); ok {
 		w.seen[id] = appt
 	}
@@ -149,6 +146,28 @@ func (w *world) record(resp response) {
 		w.booked = appt
 		w.appointments = append(w.appointments, appt)
 	}
+}
+
+// selectResponse makes resp, an exchange that was already recorded, the scenario's last response
+// and, when it carries an appointment, "the appointment". It adds nothing to the history, so
+// selecting a response that is already recorded leaves every list as it was.
+func (w *world) selectResponse(resp response) {
+	w.status, w.body, w.header = resp.status, resp.body, resp.header
+	if appt := appointmentIn(resp); appt != nil {
+		w.current = appt
+	}
+}
+
+// appointmentIn is the appointment a 200 or 201 response carries, or nil when it carries none.
+func appointmentIn(resp response) map[string]any {
+	if resp.status != http.StatusOK && resp.status != http.StatusCreated {
+		return nil
+	}
+	appt, err := resp.json()
+	if err != nil || appt["id"] == nil {
+		return nil
+	}
+	return appt
 }
 
 // last returns the last response as a response value.

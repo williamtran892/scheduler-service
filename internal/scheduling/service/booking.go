@@ -28,23 +28,24 @@ const (
 // plan is a request for cells on its way through the checks: the dealership and service type it
 // resolved to, the start it asked for, then the aligned start and the cell runs it needs, and the
 // one appointment id the whole request uses (it also seeds the tie shuffle). A booking fills cmd.
-// A reschedule or a late arrival moves an existing appointment instead: owner is its id, whose
-// cells count as free; pinBay and pinTech are the resources a reschedule names; prefer is the
-// pair tried first (design 5.4).
+// A reschedule or a late arrival moves an existing appointment instead: existingAppointmentID is
+// its id, whose cells count as free; requiredBayID and requiredTechnicianID are the resources a
+// reschedule names; preferredPair is the pair tried first (design 5.4).
 type plan struct {
-	cmd       BookCommand
-	cfg       scheduling.DealershipConfig
-	req       scheduling.ServiceRequirement
-	channel   scheduling.Channel
-	requested time.Time
-	start     time.Time
-	bay       scheduling.CellRun
-	tech      scheduling.CellRun
-	id        string
+	cmd           BookCommand
+	cfg           scheduling.DealershipConfig
+	req           scheduling.ServiceRequirement
+	channel       scheduling.Channel
+	requested     time.Time
+	start         time.Time
+	bay           scheduling.CellRun
+	tech          scheduling.CellRun
+	appointmentID string
 
-	owner           string
-	pinBay, pinTech string
-	prefer          scheduling.Candidate
+	existingAppointmentID string
+	requiredBayID         string
+	requiredTechnicianID  string
+	preferredPair         scheduling.Candidate
 }
 
 // errNoPair and errCellsGone end claim: every pair was tried, or the ledger cells went missing
@@ -70,7 +71,7 @@ func (s *service) Book(ctx context.Context, cmd BookCommand) (Record, error) {
 	if err := s.checkWorkingTime(ctx, p); err != nil {
 		return Record{}, err
 	}
-	p.id = s.ids.New()
+	p.appointmentID = s.ids.New()
 
 	pairs, err := s.candidates(ctx, p)
 	if err != nil {
@@ -225,14 +226,14 @@ func (s *service) candidates(ctx context.Context, p plan) ([]scheduling.Candidat
 		return nil, fmt.Errorf("no active technician at %s holds %s on %s: %w", p.cfg.Code,
 			strings.Join(p.req.RequiredSkills, ", "), day.LocalDate, scheduling.ErrNoQualifiedTechnician)
 	}
-	islands, loads, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day, p.owner)
+	islands, loads, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day, p.existingAppointmentID)
 	if err != nil {
 		return nil, err
 	}
 	bays, techs = p.restrict(bays, techs)
-	pairs := scheduling.CandidatePairs(p.start, p.cfg.Grid, p.req, bays, techs, islands, loads, scheduling.SeedFrom(p.id))
+	pairs := scheduling.CandidatePairs(p.start, p.cfg.Grid, p.req, bays, techs, islands, loads, scheduling.SeedFrom(p.appointmentID))
 	if i := slices.IndexFunc(pairs, func(c scheduling.Candidate) bool {
-		return c.BayID == p.prefer.BayID && c.TechID == p.prefer.TechID
+		return c.BayID == p.preferredPair.BayID && c.TechID == p.preferredPair.TechID
 	}); i > 0 {
 		preferred := pairs[i]
 		pairs = slices.Insert(slices.Delete(pairs, i, i+1), 0, preferred)
@@ -244,19 +245,19 @@ func (s *service) candidates(ctx context.Context, p plan) ([]scheduling.Candidat
 // of a type the service does not allow is INVALID_VALUE naming the field; a technician without
 // the required skills on the day is NO_QUALIFIED_TECHNICIAN.
 func (p plan) checkPins(bays []scheduling.ServiceBay, techs []scheduling.Technician) error {
-	if p.pinBay != "" {
-		i := slices.IndexFunc(bays, func(b scheduling.ServiceBay) bool { return b.ID == p.pinBay })
+	if p.requiredBayID != "" {
+		i := slices.IndexFunc(bays, func(b scheduling.ServiceBay) bool { return b.ID == p.requiredBayID })
 		if i < 0 || !slices.Contains(p.req.AllowedBayTypes, bays[i].Type) {
 			return platform.InvalidValue("serviceBayId", "is not an active bay of this dealership of a type the service type allows")
 		}
 	}
-	if p.pinTech != "" {
-		i := slices.IndexFunc(techs, func(t scheduling.Technician) bool { return t.ID == p.pinTech })
+	if p.requiredTechnicianID != "" {
+		i := slices.IndexFunc(techs, func(t scheduling.Technician) bool { return t.ID == p.requiredTechnicianID })
 		if i < 0 {
 			return platform.InvalidValue("technicianId", "is not an active technician of this dealership")
 		}
 		if !techs[i].HasAll(p.req.RequiredSkills) {
-			return fmt.Errorf("technician %s does not hold %s on %s: %w", p.pinTech,
+			return fmt.Errorf("technician %s does not hold %s on %s: %w", p.requiredTechnicianID,
 				strings.Join(p.req.RequiredSkills, ", "), p.cfg.Day(p.start).LocalDate, scheduling.ErrNoQualifiedTechnician)
 		}
 	}
@@ -265,11 +266,11 @@ func (p plan) checkPins(bays []scheduling.ServiceBay, techs []scheduling.Technic
 
 // restrict keeps only the bay and the technician the plan names, when it names them.
 func (p plan) restrict(bays []scheduling.ServiceBay, techs []scheduling.Technician) ([]scheduling.ServiceBay, []scheduling.Technician) {
-	if p.pinBay != "" {
-		bays = slices.DeleteFunc(slices.Clone(bays), func(b scheduling.ServiceBay) bool { return b.ID != p.pinBay })
+	if p.requiredBayID != "" {
+		bays = slices.DeleteFunc(slices.Clone(bays), func(b scheduling.ServiceBay) bool { return b.ID != p.requiredBayID })
 	}
-	if p.pinTech != "" {
-		techs = slices.DeleteFunc(slices.Clone(techs), func(t scheduling.Technician) bool { return t.ID != p.pinTech })
+	if p.requiredTechnicianID != "" {
+		techs = slices.DeleteFunc(slices.Clone(techs), func(t scheduling.Technician) bool { return t.ID != p.requiredTechnicianID })
 	}
 	return bays, techs
 }
@@ -282,11 +283,13 @@ func (p plan) restrict(bays []scheduling.ServiceBay, techs []scheduling.Technici
 // version) unchanged.
 func (s *service) claim(ctx context.Context, p plan, pairs []scheduling.Candidate,
 	attempt func(scheduling.Candidate) (Record, error)) (Record, error) {
-	recomputed := false
-	for i := 0; i < len(pairs); i++ {
-		rec, err := attempt(pairs[i])
+	remainingPairs := pairs
+	refreshed := false
+	for len(remainingPairs) > 0 {
+		pair := remainingPairs[0]
+		rec, err := attempt(pair)
 		if errors.Is(err, scheduling.ErrDeadlockVictim) {
-			rec, err = attempt(pairs[i])
+			rec, err = attempt(pair)
 		}
 
 		switch {
@@ -294,15 +297,16 @@ func (s *service) claim(ctx context.Context, p plan, pairs []scheduling.Candidat
 			return rec, nil
 		case errors.Is(err, scheduling.ErrSlotTaken), errors.Is(err, scheduling.ErrDeadlockVictim):
 			// the pair is gone; try the next one
+			remainingPairs = remainingPairs[1:]
 		case errors.Is(err, scheduling.ErrCellsMissing):
-			if recomputed {
+			if refreshed {
 				return Record{}, errCellsGone
 			}
-			recomputed = true
-			if pairs, err = s.candidates(ctx, p); err != nil {
+			refreshed = true
+			// start again with the refreshed candidates in place of the pairs left
+			if remainingPairs, err = s.candidates(ctx, p); err != nil {
 				return Record{}, err
 			}
-			i = -1 // start again with the recomputed pairs
 		default:
 			return Record{}, err
 		}
@@ -351,7 +355,7 @@ func (s *service) newAppointment(p plan, pair scheduling.Candidate) scheduling.A
 	}
 	now := s.clock.Now().Truncate(time.Microsecond)
 	return scheduling.Appointment{
-		ID:               p.id,
+		ID:               p.appointmentID,
 		TenantID:         p.cfg.TenantID,
 		DealershipID:     p.cfg.DealershipID,
 		CustomerID:       p.cmd.CustomerID,
@@ -427,8 +431,8 @@ func (s *service) availabilityChangedError(ctx context.Context, p plan) error {
 }
 
 // alternatives returns the nearest feasible starts for the same service type, freshly computed
-// over the requested local date and the next one, with the plan's owner cells free and its named
-// resources respected.
+// over the requested local date and the next one, with the cells of the plan's existing appointment
+// free and its named resources respected.
 func (s *service) alternatives(ctx context.Context, p plan) ([]scheduling.Slot, error) {
 	first := p.cfg.Day(p.start)
 	var starts []time.Time
@@ -437,7 +441,7 @@ func (s *service) alternatives(ctx context.Context, p plan) ([]scheduling.Slot, 
 		if err != nil {
 			return nil, err
 		}
-		islands, _, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day, p.owner)
+		islands, _, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day, p.existingAppointmentID)
 		if err != nil {
 			return nil, err
 		}

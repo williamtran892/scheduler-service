@@ -105,7 +105,7 @@ func registerLifecycleSteps(sc *godog.ScenarioContext, w *world) {
 
 	sc.Step(`^a "(reschedule|cancel|check-in|start|complete|no-show)" request is prepared for the appointment$`, w.prepareTransition)
 	sc.Step(`^the transition request is sent$`, func(ctx context.Context) error {
-		if w.prepared == nil || w.prepared.path == "" {
+		if w.prepared == nil || w.prepared.path == bookingPath {
 			return fmt.Errorf("no transition request was prepared")
 		}
 		resp, err := w.post(ctx, w.prepared)
@@ -241,7 +241,7 @@ func (w *world) prepareTransition(operation string) error {
 	if operation == "reschedule" {
 		body["startAt"] = w.seen[id]["startAt"]
 	}
-	w.prepared = &bookingRequest{body: body, channel: defaultChannel, path: "/appointments/" + id + "/" + operation}
+	w.prepared = &preparedRequest{body: body, channel: defaultChannel, path: "/appointments/" + id + "/" + operation}
 	return nil
 }
 

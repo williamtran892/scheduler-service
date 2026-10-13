@@ -168,15 +168,18 @@ func (s *Store) islands(ctx context.Context, dealershipID string, day scheduling
 	rows, err := s.db.QueryContext(ctx, `
 		WITH free AS (
 		  SELECT ts.resource_kind, ts.resource_id, ts.slot_start, d.slot_minutes,
+		         -- Subtracting the row number times the slot length from a cell's start gives
+		         -- adjacent cells the same run_key: each next cell starts one slot later and has a
+		         -- row number one higher. A gap shifts the key, so grouping by it yields the islands.
 		         ts.slot_start - INTERVAL d.slot_minutes * ROW_NUMBER() OVER (
-		             PARTITION BY ts.resource_kind, ts.resource_id ORDER BY ts.slot_start) MINUTE AS run
+		             PARTITION BY ts.resource_kind, ts.resource_id ORDER BY ts.slot_start) MINUTE AS run_key
 		    FROM time_slot ts
 		    JOIN dealership d ON d.id = ts.dealership_id
 		   WHERE ts.dealership_id = ? AND (ts.status = ? OR ts.appointment_id = ?)
 		     AND ts.slot_start >= ? AND ts.slot_start < ?)
 		SELECT resource_kind, resource_id, MIN(slot_start), MAX(slot_start) + INTERVAL slot_minutes MINUTE
 		  FROM free
-		 GROUP BY resource_kind, resource_id, slot_minutes, run
+		 GROUP BY resource_kind, resource_id, slot_minutes, run_key
 		 ORDER BY resource_kind, resource_id, MIN(slot_start)`,
 		dealershipID, scheduling.CellFree, owner, day.From, day.To)
 	if err != nil {

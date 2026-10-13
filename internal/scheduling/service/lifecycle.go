@@ -74,9 +74,12 @@ type change struct {
 	event, outbox string
 	payload       eventPayload
 	claim         *newRuns
-	release       *scheduling.Keep
-	countReleased bool // the event reports how many cells the release freed
-	cells         scheduling.OwnedCells
+	// releaseExcept is the release policy. nil means the transition releases nothing. Non-nil
+	// means it releases every cell the appointment owns except those the Keep keeps, so
+	// &scheduling.Keep{}, which keeps nothing, releases everything.
+	releaseExcept  *scheduling.Keep
+	countReleased  bool                  // the event reports how many cells the release freed
+	resultingCells scheduling.OwnedCells // the cells the appointment owns after the transition
 }
 
 // Cancel releases every cell of a CONFIRMED or CHECKED_IN appointment; a CANCELLED one is
@@ -94,10 +97,10 @@ func (s *service) Cancel(ctx context.Context, cmd TransitionCommand) (Record, er
 		return Record{}, err
 	}
 	return s.apply(ctx, cmd, a, s.next(a, scheduling.StatusCancelled), change{
-		event:   eventCancelled,
-		outbox:  outboxCancelled,
-		payload: eventPayload{Reason: cmd.Reason, PreviousStatus: string(a.Status)},
-		release: &scheduling.Keep{},
+		event:         eventCancelled,
+		outbox:        outboxCancelled,
+		payload:       eventPayload{Reason: cmd.Reason, PreviousStatus: string(a.Status)},
+		releaseExcept: &scheduling.Keep{},
 	})
 }
 
@@ -107,7 +110,7 @@ func (s *service) MarkNoShow(ctx context.Context, cmd TransitionCommand) (Record
 	if err := staffOnly(cmd.Channel, "no-show"); err != nil {
 		return Record{}, err
 	}
-	a, err := s.begin(ctx, cmd, scheduling.StatusNoShow)
+	a, err := s.loadForTransition(ctx, cmd, scheduling.StatusNoShow)
 	if err != nil {
 		return Record{}, err
 	}
@@ -115,7 +118,7 @@ func (s *service) MarkNoShow(ctx context.Context, cmd TransitionCommand) (Record
 		event:         eventNoShow,
 		outbox:        outboxNoShow,
 		payload:       eventPayload{Reason: cmd.Reason},
-		release:       &scheduling.Keep{},
+		releaseExcept: &scheduling.Keep{},
 		countReleased: true,
 	})
 }
@@ -126,7 +129,7 @@ func (s *service) CheckIn(ctx context.Context, cmd CheckInCommand) (Record, erro
 	if err := staffOnly(cmd.Channel, "check-in"); err != nil {
 		return Record{}, err
 	}
-	a, err := s.begin(ctx, cmd.TransitionCommand, scheduling.StatusCheckedIn)
+	a, err := s.loadForTransition(ctx, cmd.TransitionCommand, scheduling.StatusCheckedIn)
 	if err != nil {
 		return Record{}, err
 	}
@@ -140,10 +143,10 @@ func (s *service) CheckIn(ctx context.Context, cmd CheckInCommand) (Record, erro
 		return Record{}, fmt.Errorf("read cells of appointment %s: %w", a.ID, err)
 	}
 	return s.apply(ctx, cmd.TransitionCommand, a, s.next(a, scheduling.StatusCheckedIn), change{
-		event:   eventCheckedIn,
-		outbox:  outboxCheckedIn,
-		payload: payload,
-		cells:   cells,
+		event:          eventCheckedIn,
+		outbox:         outboxCheckedIn,
+		payload:        payload,
+		resultingCells: cells,
 	})
 }
 
@@ -153,7 +156,7 @@ func (s *service) Start(ctx context.Context, cmd StartCommand) (Record, error) {
 	if err := staffOnly(cmd.Channel, "start"); err != nil {
 		return Record{}, err
 	}
-	a, err := s.begin(ctx, cmd.TransitionCommand, scheduling.StatusInProgress)
+	a, err := s.loadForTransition(ctx, cmd.TransitionCommand, scheduling.StatusInProgress)
 	if err != nil {
 		return Record{}, err
 	}
@@ -174,10 +177,10 @@ func (s *service) Start(ctx context.Context, cmd StartCommand) (Record, error) {
 	next := s.next(a, scheduling.StatusInProgress)
 	next.ActualStartAt = &startedAt
 	return s.apply(ctx, cmd.TransitionCommand, a, next, change{
-		event:   eventStarted,
-		outbox:  outboxStarted,
-		payload: eventPayload{Reason: cmd.Reason, ActualStartAt: &startedAt},
-		cells:   cells,
+		event:          eventStarted,
+		outbox:         outboxStarted,
+		payload:        eventPayload{Reason: cmd.Reason, ActualStartAt: &startedAt},
+		resultingCells: cells,
 	})
 }
 
@@ -189,7 +192,7 @@ func (s *service) Complete(ctx context.Context, cmd CompleteCommand) (Record, er
 	if err := staffOnly(cmd.Channel, "complete"); err != nil {
 		return Record{}, err
 	}
-	a, err := s.begin(ctx, cmd.TransitionCommand, scheduling.StatusCompleted)
+	a, err := s.loadForTransition(ctx, cmd.TransitionCommand, scheduling.StatusCompleted)
 	if err != nil {
 		return Record{}, err
 	}
@@ -221,9 +224,9 @@ func (s *service) Complete(ctx context.Context, cmd CompleteCommand) (Record, er
 		event:         eventCompleted,
 		outbox:        outboxCompleted,
 		payload:       eventPayload{Reason: cmd.Reason, ActualEndAt: &completedAt},
-		release:       &scheduling.Keep{Before: before},
+		releaseExcept: &scheduling.Keep{Before: before},
 		countReleased: true,
-		cells: scheduling.OwnedCells{
+		resultingCells: scheduling.OwnedCells{
 			Bay:        cellsBefore(owned.Bay, before, cfg.Grid.Slot()),
 			Technician: cellsBefore(owned.Technician, before, cfg.Grid.Slot()),
 		},
@@ -252,10 +255,10 @@ func staffOnly(channel scheduling.Channel, action string) error {
 	return nil
 }
 
-// begin loads the appointment and runs the checks every transition shares: the appointment
-// exists (scheduling.ErrNotFound), expectedVersion is its version, and the state machine allows
-// moving to to.
-func (s *service) begin(ctx context.Context, cmd TransitionCommand, to scheduling.AppointmentStatus) (scheduling.Appointment, error) {
+// loadForTransition reads the appointment and runs the checks every transition shares: the
+// appointment exists (scheduling.ErrNotFound), expectedVersion is its version, and the state
+// machine allows moving to to. It starts no transaction.
+func (s *service) loadForTransition(ctx context.Context, cmd TransitionCommand, to scheduling.AppointmentStatus) (scheduling.Appointment, error) {
 	a, err := s.store.Appointment(ctx, cmd.AppointmentID)
 	if err != nil {
 		return scheduling.Appointment{}, err
@@ -291,7 +294,7 @@ func (s *service) next(a scheduling.Appointment, status scheduling.AppointmentSt
 // outbox row. It returns the record after the transition, which is also what
 // the outbox row holds. The record is read before the transaction, like booking's.
 func (s *service) apply(ctx context.Context, cmd TransitionCommand, a, next scheduling.Appointment, ch change) (Record, error) {
-	rec, err := s.record(ctx, next, ch.cells)
+	rec, err := s.record(ctx, next, ch.resultingCells)
 	if err != nil {
 		return Record{}, err
 	}
@@ -311,8 +314,8 @@ func (s *service) apply(ctx context.Context, cmd TransitionCommand, a, next sche
 			}
 		}
 		payload := ch.payload
-		if ch.release != nil {
-			released, err := tx.ReleaseCells(a.ID, *ch.release)
+		if ch.releaseExcept != nil {
+			released, err := tx.ReleaseCells(a.ID, *ch.releaseExcept)
 			if err != nil {
 				return err
 			}

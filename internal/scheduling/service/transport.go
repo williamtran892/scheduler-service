@@ -42,7 +42,8 @@ func RegisterRoutes(mux *http.ServeMux, e Endpoints, opts ...kithttp.ServerOptio
 }
 
 // bookBody is the wire form of BookAppointmentRequest. Identifiers and the start are strings so
-// a missing field can be told from an empty one and every rejection names its field.
+// the decoder can check each one and every rejection names its field. A missing string field and
+// an empty one both decode to "" and are both answered as required.
 type bookBody struct {
 	DealershipID     string                      `json:"dealershipId"`
 	ServiceTypeID    string                      `json:"serviceTypeId"`
