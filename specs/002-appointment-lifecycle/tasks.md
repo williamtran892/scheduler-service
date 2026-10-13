@@ -149,8 +149,8 @@ Single Go module at the repository root: `cmd/`, `internal/`, `local/mysql/`, `f
 
 ## Phase 12: Review gate
 
-- [ ] T057 Measure SC-006 (a transition under 200 ms p95 at 50 req/s) and record it in the pull request
-- [ ] T058 Reviewer checks each constitution gate (Behavior, Red, Green, Refactor, Docs) was honoured and plan.md Complexity Tracking justifies every addition
+- [x] T057 Measure SC-006 (a transition under 200 ms p95 at 50 req/s) and record it in the pull request. Measured 2026-10-13 by the implementer: 1 500 requests at 50 req/s for 30 s over a lifecycle mix, overall p95 14.6 ms (book 8.6, reschedule 8.7, check-in 14.5, start 14.5, complete 15.6, cancel 4.6); check-in, start and complete pay for an OwnedCells scan on a freshly seeded database until index statistics settle (8.3 ms overall after ANALYZE TABLE).
+- [x] T058 Reviewer checks each constitution gate (Behavior, Red, Green, Refactor, Docs) was honoured and plan.md Complexity Tracking justifies every addition. Done 2026-10-13 by the reviewing session: behaviour and unit-test gates approved before code; Red proven; Green, lint, vet, mock check and the full suite re-run by the reviewer; refactor reviewed; docs updated in the same branch; the implementation's abstractions recorded in Complexity Tracking.
 
 ---
 
