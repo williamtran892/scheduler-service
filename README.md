@@ -140,7 +140,8 @@ internal/setup/         Workshop Setup (read-only): mysql implements scheduling.
 internal/customers/     Customer & Vehicle (read-only): mysql implements scheduling.CustomerReader
 internal/scheduling/    Scheduling: grid and availability, the claim and release, appointments and
                         their lifecycle (root, mysql, service, endpoint, sweeper); endpoint is the
-                        HTTP surface, one file per operation
+                        HTTP surface, two files: endpoint.go (route table and go-kit endpoints)
+                        and facade.go (request decoders and response encoders)
 local/mysql/            schema.sql and data.sql, the compose init scripts
 features/               Gherkin feature files
 test/acceptance/        godog suite: a black-box HTTP client with relative dates and fixture names;

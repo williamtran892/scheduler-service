@@ -47,7 +47,7 @@ implements Scheduling's reader interfaces. The design behind the split is in
 | `internal/scheduling` | Scheduling root, plain Go with no SQL or HTTP: the grid (`Grid` with `Align`, `Floor` and `Ceil`, `CellRun`), `ServiceRequirement` and its runs, `FeasibleStarts`, `CandidatePairs` and `NearestAlternatives`, `Appointment` and `BookingKey`, the enumerations and the appointment status transition table (`CanTransitionTo`), `Keep` (what a release leaves booked), the typed errors, and the interfaces `Store`, `Tx`, `WorkshopReader` and `CustomerReader` |
 | `internal/scheduling/mysql` | `Store` and `Tx` over `appointment`, `time_slot`, `appointment_event` and `outbox`; maps MySQL errors 1062 on `uq_appointment_booking` and 1213 to Scheduling's errors. `ClaimPair` and `ReleaseCells` in `ledger.go` are the only code that writes `time_slot` |
 | `internal/scheduling/service` | The go-kit service, with no HTTP routes or decoders: `Service` (`Book`, `Get`, `Reschedule`, `Cancel`, `CheckIn`, `Start`, `Complete`, `MarkNoShow`), its commands and `Record`, the business code, the appointment view per channel (`NewAppointmentView`, also the outbox snapshot), and the logging, instrumenting and tracing middleware |
-| `internal/scheduling/endpoint` | Scheduling's HTTP surface, one file per operation (`book.go`, `get.go`, `reschedule.go`, `cancel.go`, `check_in.go`, `start.go`, `complete.go`, `no_show.go`). Each holds the go-kit endpoint (`Make<Operation>Endpoint`), the request decoder and the `EndpointSpec` constructor of its operation. `endpoint.go` has `EndpointSpec`, `Specs` and `Register`; `decode.go`, `encode.go` and `transition.go` hold what the operations share |
+| `internal/scheduling/endpoint` | Scheduling's HTTP surface, in two files. `endpoint.go` has `EndpointSpec`, `Specs` (the route table: one slice literal with a row per operation), `Register`, and the go-kit endpoints (`Make<Operation>Endpoint`) with their request types. `facade.go` has the request decoders, the response encoders and the parsing they share |
 | `internal/scheduling/sweeper` | The no-show sweeper: `Service.RunOnce` marks overdue appointments through the Scheduling service's own `MarkNoShow`, and `Worker` runs it on a ticker until its context ends |
 
 Dependency rules, each pinned by a test or a convention the reviewer checks:
@@ -89,12 +89,14 @@ Dependency rules, each pinned by a test or a convention the reviewer checks:
 Each route is one `EndpointSpec` in `internal/scheduling/endpoint`, and a spec has five fields:
 `HTTPMethod`, `PathTemplate` (an `http.ServeMux` pattern such as
 `/appointments/{appointmentId}/check-in`), `Endpoint` (the go-kit endpoint), `Decode` and `Encode`.
-The operation's file builds its spec (`Book`, `Get`, `Reschedule`, `Cancel`, `CheckIn`, `Start`,
-`Complete`, `NoShow`), `Specs(svc)` lists them all, and `Register(mux, specs, opts...)` mounts each
-as `kithttp.NewServer(spec.Endpoint, spec.Decode, spec.Encode, opts...)` at `HTTPMethod + " " +
-PathTemplate`. A new route is a new file, a new spec in `Specs`, and a row above. Business failures
-travel as the response's `Err` and are written by `platform.EncodeError`, as are the errors of a
-decoder, through the `kithttp.ServerErrorEncoder` that `app.NewHandler` passes to `Register`.
+`Specs(svc)` in `endpoint.go` lists them all as one slice literal, each element showing its method,
+path template, `Make<Operation>Endpoint(svc)`, decoder and encoder, so the whole route table reads
+in one place. `Register(mux, specs, opts...)` mounts each as `kithttp.NewServer(spec.Endpoint,
+spec.Decode, spec.Encode, opts...)` at `HTTPMethod + " " + PathTemplate`. The decoders and encoders
+are in `facade.go`. A new route is a new element in `Specs`, its endpoint in `endpoint.go`, its
+decoder in `facade.go`, and a row above. Business failures travel as the response's `Err` and are
+written by `platform.EncodeError`, as are the errors of a decoder, through the
+`kithttp.ServerErrorEncoder` that `app.NewHandler` passes to `Register`.
 
 Routes have no `/v1` prefix; the contract's `/v1` is read as a gateway base path. The other
 operations of the contract (listing, availability search, setup) are not served yet, and the mux
