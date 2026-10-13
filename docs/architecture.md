@@ -42,7 +42,7 @@ implements Scheduling's reader interfaces. The design behind the split is in
 | `cmd/scheduler` | Wiring only. Chooses the real implementation of every dependency |
 | `internal/app` | `NewHandler`: the one mux, `GET /healthz`, each domain's `EndpointSpec`s mounted through its `Register`, and the `otelhttp` wrapper |
 | `internal/platform` | Cross-cutting pieces: `Config`, `Clock` (`RealClock`, `FakeClock`), `IDs` (`UUIDs`), `OpenMySQL`, `EncodeError` and `Problem`, `Health`, `SetupOTel`. Imports no domain package |
-| `internal/setup/mysql` | Workshop Setup's `Repository`, which implements `scheduling.WorkshopReader` over `dealership`, `service_bay`, `technician`, `skill`, `technician_skill`, `service_type`, `service_type_bay_type`, `service_type_skill` and returns Scheduling's types. A service type and its skills and bay types are one query into a `ServiceRequirement`; only `ACTIVE` bays and technicians are listed, and a technician carries the skills valid on the date asked (`valid_from <= date`, `valid_to` null or `>= date`) |
+| `internal/workshop/mysql` | Workshop Setup's `Repository`, which implements `scheduling.WorkshopReader` over `dealership`, `service_bay`, `technician`, `skill`, `technician_skill`, `service_type`, `service_type_bay_type`, `service_type_skill` and returns Scheduling's types. A service type and its skills and bay types are one query into a `ServiceRequirement`; only `ACTIVE` bays and technicians are listed, and a technician carries the skills valid on the date asked (`valid_from <= date`, `valid_to` null or `>= date`) |
 | `internal/customers/mysql` | Customer & Vehicle's `Repository`, which implements `scheduling.CustomerReader` over `customer` and `vehicle` and returns Scheduling's types |
 | `internal/scheduling` | Scheduling root, plain Go with no SQL or HTTP. `service.go` declares every shared struct and interface in one place, in sections: the appointment and ledger types (`Appointment`, `BookingKey`, `CustomerRequests`, `Event`, `CellRange`, `OwnedCells`, `ResourceRun`, `Keep`, `Loads`), the grid (`Grid`, `CellRun`), the requirement and resources (`ServiceRequirement`, `DealershipConfig`, `DayWindow`, `ServiceBay`, `Technician`), the customers (`Customer`, `Vehicle`) and the readers (`WorkshopReader`, `CustomerReader`). The methods and functions stay with their algorithms: `grid.go` (`Align`, `Floor`, `Ceil`, `CellsFor`, and `CellRun`'s `Last` and `End`), `requirement.go` (`ServiceRequirement.Runs`, `DealershipConfig.Day`, `Technician.HasAll`), `appointment.go` (`Appointment.Key`, `Keep.Keeps`), `enums.go` (the enumerations and the appointment status transition table, `CanTransitionTo`) and `errors.go` (the typed errors) |
 | `internal/scheduling/mysql` | Scheduling's own data access. `store.go` declares the interfaces `Store` and `Tx`; `db.go` has their implementation, the unexported types `store` and `tx` behind `New(db) Store`, over `appointment`, `time_slot`, `appointment_event` and `outbox`. It maps MySQL errors 1062 on `uq_appointment_booking` and 1213 to Scheduling's errors. `ClaimPair` and `ReleaseCells` in `ledger.go` are the only code that writes `time_slot`; `GetAvailableResources` and `GetResourceLoad`, the two reads candidate selection makes of the ledger, are in `ledger.go` too |
@@ -60,9 +60,9 @@ Dependency rules, each pinned by a test or a convention the reviewer checks:
   `scheduling/mysql` (`mysql.Store` and `mysql.Tx`), and its unit tests use mocks generated from
   those two interfaces and from the two readers.
 - Scheduling reaches the other two domains only through the reader interfaces it declares,
-  `WorkshopReader` and `CustomerReader`. `setup/mysql` and `customers/mysql` implement them
+  `WorkshopReader` and `CustomerReader`. `workshop/mysql` and `customers/mysql` implement them
   directly and return Scheduling's types, so they import `scheduling`; `scheduling` never
-  imports `setup` or `customers`.
+  imports `workshop` or `customers`.
 - A `mysql` package reads and writes its own domain's tables. One exception: `scheduling/mysql`
   joins `dealership.slot_minutes` in `OwnedCells`, because a cell's length is needed to end a
   cell range and the method's signature does not carry the grid.
@@ -370,14 +370,14 @@ MySQL 8.4. The schema lives in `local/mysql/schema.sql` and the fixture in `loca
 Both run as container init scripts, and the application never creates tables. Every connection
 uses UTC (`parseTime=true&loc=UTC&time_zone='+00:00'`). There are no stored routines or triggers,
 and enumerations are `VARCHAR` columns. Scheduling's allowed values are Go constants with parse and
-scan functions in its root. Setup's bay types and statuses are not: Scheduling reads a bay type as
-text, and the Setup repository selects `ACTIVE` in SQL.
+scan functions in its root. Workshop's bay types and statuses are not: Scheduling reads a bay type as
+text, and the Workshop repository selects `ACTIVE` in SQL.
 
 The schema has 15 tables:
 
 | Domain | Tables |
 |---|---|
-| Setup | `tenant`, `dealership`, `service_bay`, `technician`, `skill`, `technician_skill`, `service_type`, `service_type_bay_type`, `service_type_skill` |
+| Workshop | `tenant`, `dealership`, `service_bay`, `technician`, `skill`, `technician_skill`, `service_type`, `service_type_bay_type`, `service_type_skill` |
 | Customers | `customer`, `vehicle` |
 | Scheduling | `appointment`, `time_slot`, `appointment_event`, `outbox` |
 

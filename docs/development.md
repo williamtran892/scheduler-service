@@ -181,7 +181,7 @@ needed.
 - Only `platform.EncodeError` maps errors to HTTP status codes. A domain error exposes its
   problem code through `ProblemCode()`, and `platform` looks the status up in one table.
 - The Scheduling root imports only the standard library; Scheduling reaches the other domains
-  through the reader interfaces it declares, which `setup/mysql` and `customers/mysql` implement
+  through the reader interfaces it declares, which `workshop/mysql` and `customers/mysql` implement
   (see [System Architecture](./architecture.md)). A new shared struct or interface of the root goes
   in `internal/scheduling/service.go`; its methods stay with their algorithm. `Store` and `Tx`
   are declared in `internal/scheduling/mysql`, and `mysql` never imports `service` or `sweeper`.
