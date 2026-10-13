@@ -219,7 +219,7 @@ func (s *Store) loads(ctx context.Context, dealershipID string, day scheduling.D
 }
 
 // WorkingCells counts the distinct cell starts in [from, to) for which the dealership has a
-// ledger cell on any resource, in any status: the dealership's working time (research R6).
+// ledger cell on any resource, in any status: the dealership's working time (the ledger is the working time in this release).
 func (s *Store) WorkingCells(ctx context.Context, dealershipID string, from, to time.Time) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `

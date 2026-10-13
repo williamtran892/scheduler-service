@@ -134,7 +134,7 @@ func referenceError(field string, err error) error {
 // existing answers a request whose booking key already has an appointment: that appointment,
 // unchanged, when it is the same request (the same dealership and service type, and neither
 // cancelled nor a no-show), otherwise DUPLICATE_BOOKING carrying it. answered is false when the
-// key is free, or true when rec and err are the outcome of the request (research R2).
+// key is free, or true when rec and err are the outcome of the request.
 func (s *service) existing(ctx context.Context, cmd BookCommand) (rec Record, answered bool, err error) {
 	key := scheduling.BookingKey{VehicleID: cmd.VehicleID, CustomerID: cmd.CustomerID, StartAt: cmd.StartAt.UTC(), Kind: cmd.Kind}
 	a, found, err := s.store.AppointmentByBookingKey(ctx, key)
@@ -192,7 +192,7 @@ func (s *service) validate(p plan) (plan, error) {
 
 // checkWorkingTime refuses a booking whose bay run or technician run, buffers included, covers a
 // cell the dealership has no ledger cell for: in this release the ledger is working time
-// (research R6).
+// (the ledger is the working time in this release).
 func (s *service) checkWorkingTime(ctx context.Context, p plan) error {
 	for _, run := range []scheduling.CellRun{p.bay, p.tech} {
 		n, err := s.store.WorkingCells(ctx, p.cfg.DealershipID, run.First, run.End())

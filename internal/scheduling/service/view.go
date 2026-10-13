@@ -9,7 +9,7 @@ import (
 
 // AppointmentView is the contract's Appointment schema as written on the wire. Times of the
 // appointment and its cells are in the dealership's offset; createdAt, updatedAt and the events
-// are in UTC (research R10).
+// are in UTC.
 type AppointmentView struct {
 	ID               string                       `json:"id"`
 	Status           scheduling.AppointmentStatus `json:"status"`

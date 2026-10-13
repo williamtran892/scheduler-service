@@ -280,7 +280,7 @@ func parseOptionalInstant(field, value string) (*time.Time, error) {
 }
 
 // channelOf reads the calling channel from X-Channel, the stand-in for the token's channel claim
-// until authentication exists (research R8): missing is 400, unknown is 422.
+// until authentication exists: missing is 400, unknown is 422.
 func channelOf(r *http.Request) (scheduling.Channel, error) {
 	v := r.Header.Get(channelHeader)
 	if v == "" {

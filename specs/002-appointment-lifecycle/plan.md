@@ -115,7 +115,7 @@ test/acceptance/
 ├── world.go                      # appointments by customer; last seen version
 ├── steps_lifecycle.go            # transitions, prepared transition requests, record assertions
 ├── steps_booking.go              # "has booked ... at dealership"; numeric "set to"
-├── backdate_test.go              # @clock backdating and polling steps; the suite's only database access
+├── steps_clock.go              # @clock backdating and polling steps; the suite's only database access
 └── suite_test.go                 # registers the new steps
 ```
 
@@ -207,7 +207,7 @@ approved and seen failing before the code in that step.
 | C7 | contract `cancelAppointment` vs the state machine and `expectedVersion` | "Cancelling an already cancelled appointment returns the record unchanged", but `CANCELLED → CANCELLED` is not a transition and a retried cancel carries a stale version | Answer it before the version check (FR-021) |
 | C8 | feature 001's release statement vs contract "Staff only" | `docs/architecture.md`: "401 and 403 are never returned"; the contract marks check-in and the reschedule pins as staff only, design 6 also start, complete and no-show | 403 `FORBIDDEN` for customer channels on staff actions (spec Clarifications). Docs updated |
 | C9 | decision 2 vs the fixture and the implemented working-time rule | Decision 2 lists the late arrival among behaviours tested by backdating, but the late arrival claims cells at the current time, which exist on `MAN01` only from 07:00Z to 17:00Z; and `MAN01` cannot get cells around the clock, because working time is any cell of the dealership (feature 001's `OUTSIDE_OPENING_HOURS` at 06:00 and 19:00 would break) | `LDS01` gets `Bay L1` and `Jo` with cells around the clock (R10, R13). Its late arrival uses the current day at `LDS01`, outside the "days 9 to 12" calendar, which governs `MAN01` |
-| C10 | `ledger_guard_test.go` vs the `@clock` step | The guard fails on `UPDATE time_slot` in any non-test `.go` file; `test/acceptance` keeps its steps in non-test files | The backdating step goes in `backdate_test.go`; the guard is unchanged (R10) |
+| C10 | `ledger_guard_test.go` vs the `@clock` step | The guard fails on `UPDATE time_slot` in any non-test `.go` file; `test/acceptance` keeps its steps in non-test files | The backdating step goes in `steps_clock.go`; the guard is unchanged (R10) |
 | C11 | design 4.3, notes 4.7 vs decision 2 | The design's job "runs every minute"; the notes hard-code `time.Minute` and build the sweeper over the store with its own transaction | Interval and grace are configuration (defaults 1 minute and 30 minutes); the sweeper calls the service's `MarkNoShow` (R7) |
 | C12 | contract `RescheduleRequest` | `minProperties: 2` admits `{expectedVersion, reason}`, which changes nothing | 400 `VALIDATION_ERROR` naming `startAt` (FR-002) |
 | C13 | contract `CheckInRequest` vs the schema | `mileage` and `additionalConcerns` have no column and no field on `Appointment` | Event payload only (FR-007) |
@@ -244,3 +244,6 @@ approved and seen failing before the code in that step.
 | `LDS01` resources with cells around the clock (2 688 rows) | The late arrival claims cells at the current time; without them its outcome depends on the hour the suite runs | Cells around the clock on `MAN01`: changes working time for feature 001's `OUTSIDE_OPENING_HOURS` scenarios |
 | Two configuration variables (`NO_SHOW_GRACE`, `NO_SHOW_SWEEP_INTERVAL`) | Decision 2; design 4.3 leaves the grace period as an open question with a default | Constants: the suite could not run the sweeper every second |
 | `VersionConflictError` carrying both versions | Contract detail "Appointment is at version 3; you sent 2" | A plain sentinel: loses the numbers the client needs |
+| `plan` gains `channel`, `requested`, `prefer`; `claim` takes an attempt closure and returns `errNoPair` / `errCellsGone` for `Book`, `Reschedule` and the late arrival to map | Three callers share one candidate loop with different transactions and different final answers (implementer decision, accepted at review) | Three copies of the loop, or a loop that knows every caller's answer |
+| `change` + `apply` as the single transition helper; `eventPayload` and `placement` types | Six transitions share one statement order (guarded update, claim, release, event, outbox) and one payload shape | Six hand-written transactions that could drift in order |
+| Generic `commandRequest[C]`, `makeCommandEndpoint[C]`, `decodeTransition[C]`; `staffOnly`; `checkPins`, `restrict` on `plan` | Six operations with the same envelope (`expectedVersion`, channel, path id) and the same 403 rule | Six copies of decoder and endpoint |
