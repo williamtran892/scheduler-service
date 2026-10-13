@@ -86,7 +86,7 @@ Single Go module at the repository root: `cmd/`, `internal/`, `local/mysql/`, `f
 
 ## Phase 4: Unit-test approval gate
 
-- [ ] T034 User (or the reviewer they delegate to) approves the unit tests of Phase 3 and the step definitions of Phase 2; no production code before this (Principle II)
+- [x] T034 User (or the reviewer they delegate to) approves the unit tests of Phase 3 and the step definitions of Phase 2; no production code before this (Principle II). Approved by the reviewing session on the user's behalf, 2026-10-13, after reading the backdating and polling steps, the sweeper tests and the lifecycle test list; the evening times in noshow.feature are accepted (booking keys are global across dealerships).
 
 ---
 
