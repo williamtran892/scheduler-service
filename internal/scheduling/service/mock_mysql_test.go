@@ -74,21 +74,6 @@ func (mr *MockStoreMockRecorder) AppointmentByBookingKey(ctx, key any) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppointmentByBookingKey", reflect.TypeOf((*MockStore)(nil).AppointmentByBookingKey), ctx, key)
 }
 
-// DayLedger mocks base method.
-func (m *MockStore) DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DayLedger", ctx, dealershipID, day, owner)
-	ret0, _ := ret[0].([]scheduling.Island)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// DayLedger indicates an expected call of DayLedger.
-func (mr *MockStoreMockRecorder) DayLedger(ctx, dealershipID, day, owner any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DayLedger", reflect.TypeOf((*MockStore)(nil).DayLedger), ctx, dealershipID, day, owner)
-}
-
 // DueNoShows mocks base method.
 func (m *MockStore) DueNoShows(ctx context.Context, before time.Time) ([]scheduling.Appointment, error) {
 	m.ctrl.T.Helper()

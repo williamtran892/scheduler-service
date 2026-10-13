@@ -18,8 +18,6 @@ import (
 // late arrival reuse its plan, checks, candidate search and claim loop (reschedule.go).
 
 const (
-	maxAlternatives = 5 // contract Problem.alternatives: up to five nearest feasible starts
-
 	actorAnonymous  = "anonymous" // the audit actor until authentication exists
 	eventConfirmed  = "CONFIRMED"
 	aggregateType   = "Appointment"
@@ -437,23 +435,13 @@ func (s *service) afterDuplicate(ctx context.Context, p plan, dup error) (Record
 	return Record{}, fmt.Errorf("booking key reported as duplicate but no appointment owns it: %s", dup.Error())
 }
 
-// slotTaken ends a booking that found no free pair with 409 SLOT_TAKEN and alternatives, unless
-// an identical concurrent request took the pair for itself, in which case that appointment is
-// the answer.
+// slotTaken ends a booking that found no free pair with 409 SLOT_TAKEN, unless an identical
+// concurrent request took the pair for itself, in which case that appointment is the answer.
 func (s *service) slotTaken(ctx context.Context, p plan) (Record, error) {
 	if rec, answered, err := s.existing(ctx, p.cmd); answered {
 		return rec, err
 	}
-	return Record{}, s.slotTakenError(ctx, p)
-}
-
-// slotTakenError is the SLOT_TAKEN answer with the plan's alternatives.
-func (s *service) slotTakenError(ctx context.Context, p plan) error {
-	alternatives, err := s.alternatives(ctx, p)
-	if err != nil {
-		return err
-	}
-	return &scheduling.SlotTakenError{Alternatives: alternatives, Location: p.cfg.Location}
+	return Record{}, &scheduling.SlotTakenError{}
 }
 
 // availabilityChanged ends a booking whose cells kept disappearing with 409
@@ -462,41 +450,5 @@ func (s *service) availabilityChanged(ctx context.Context, p plan) (Record, erro
 	if rec, answered, err := s.existing(ctx, p.cmd); answered {
 		return rec, err
 	}
-	return Record{}, s.availabilityChangedError(ctx, p)
-}
-
-// availabilityChangedError is the AVAILABILITY_CHANGED answer with the plan's alternatives.
-func (s *service) availabilityChangedError(ctx context.Context, p plan) error {
-	alternatives, err := s.alternatives(ctx, p)
-	if err != nil {
-		return err
-	}
-	return &scheduling.AvailabilityChangedError{Alternatives: alternatives, Location: p.cfg.Location}
-}
-
-// alternatives returns the nearest feasible starts for the same service type, freshly computed
-// over the requested local date and the next one, with the cells of the plan's existing appointment
-// free and its named resources respected.
-func (s *service) alternatives(ctx context.Context, p plan) ([]scheduling.Slot, error) {
-	first := p.cfg.Day(p.start)
-	var starts []time.Time
-	for _, day := range []scheduling.DayWindow{first, p.cfg.Day(first.To)} {
-		bays, techs, err := s.workshop.Resources(ctx, p.cfg.DealershipID, day.LocalDate)
-		if err != nil {
-			return nil, err
-		}
-		islands, err := s.store.DayLedger(ctx, p.cfg.DealershipID, day, p.existingAppointmentID)
-		if err != nil {
-			return nil, err
-		}
-		bays, techs = p.restrict(bays, techs)
-		starts = append(starts, scheduling.FeasibleStarts(day, p.cfg.Grid, p.req, bays, techs, islands)...)
-	}
-
-	nearest := scheduling.NearestAlternatives(starts, p.start, s.clock.Now(), maxAlternatives)
-	slots := make([]scheduling.Slot, len(nearest))
-	for i, start := range nearest {
-		slots[i] = scheduling.Slot{StartAt: start, EndAt: start.Add(p.req.Duration)}
-	}
-	return slots, nil
+	return Record{}, &scheduling.AvailabilityChangedError{}
 }

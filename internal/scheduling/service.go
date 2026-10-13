@@ -95,13 +95,6 @@ type Event struct {
 	Payload    json.RawMessage
 }
 
-// Island is a run of consecutive FREE cells on one resource, [From, To).
-type Island struct {
-	Kind       ResourceKind
-	ResourceID string
-	From, To   time.Time
-}
-
 // Free is the set of resource ids that are free for the whole run a request needs: the bays free
 // for every cell of the bay run, the technicians free for every cell of the technician run. A
 // cell is free when it is FREE or the appointment being moved owns it.
@@ -123,11 +116,6 @@ type CellRun struct {
 	First time.Time
 	Cells int
 	Slot  time.Duration
-}
-
-// Slot is one alternative start offered with SLOT_TAKEN or AVAILABILITY_CHANGED.
-type Slot struct {
-	StartAt, EndAt time.Time
 }
 
 // ---- requirement and resources ----

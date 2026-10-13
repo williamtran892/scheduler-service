@@ -119,12 +119,13 @@ type fixture struct {
 	bays         []scheduling.ServiceBay
 	techs        []scheduling.Technician
 
-	// islands is the ledger the mocks answer from, DayLedger with the islands themselves and
-	// RunAvailability with the resources whose island holds the run; call counts the ledger
-	// reads for that local date, from 1.
-	islands      func(day scheduling.DayWindow, call int) []scheduling.Island
+	// free is the ledger the RunAvailability mock answers from: the ids of the resources that
+	// have no BOOKED cell in their run, given the number of the read, from 1 (the length of
+	// ledgerOwners). The mock also drops a resource whose run leaves the fixture's working time,
+	// 07:00Z to 17:00Z: the ledger has no cells there, so the scan does not find it free. loads
+	// is the BOOKED cells per resource that day.
+	free         func(call int) scheduling.Free
 	loads        scheduling.Loads
-	ledgerCalls  map[string]int
 	ledgerOwners []string // the owner of each ledger read, in order
 
 	// existing owns the booking key from the existingFrom-th lookup on (1-based); 0 never.
@@ -148,36 +149,29 @@ func newFixture(t *testing.T) *fixture {
 		dealerships: map[string]scheduling.DealershipConfig{"man01": man01, "lds01": lds01},
 		requirements: map[string]scheduling.ServiceRequirement{"interim": interim, "major": major, "mot": mot,
 			"ev-major": evMajor, "diagnostic": diagnostic, "aircon": aircon},
-		people:      map[string]scheduling.Customer{"alice": alice, "bob": bob},
-		vehicles:    map[string]scheduling.Vehicle{"yk21": aliceCar, "bd70": bobCar},
-		bays:        []scheduling.ServiceBay{bay1, bay2, bay3},
-		techs:       []scheduling.Technician{sam, priya, lee},
-		loads:       scheduling.Loads{},
-		ledgerCalls: map[string]int{},
-		stored:      map[string]scheduling.Appointment{},
-		owned:       map[string]scheduling.OwnedCells{},
-		events:      map[string][]scheduling.Event{},
+		people:   map[string]scheduling.Customer{"alice": alice, "bob": bob},
+		vehicles: map[string]scheduling.Vehicle{"yk21": aliceCar, "bd70": bobCar},
+		bays:     []scheduling.ServiceBay{bay1, bay2, bay3},
+		techs:    []scheduling.Technician{sam, priya, lee},
+		loads:    scheduling.Loads{},
+		stored:   map[string]scheduling.Appointment{},
+		owned:    map[string]scheduling.OwnedCells{},
+		events:   map[string][]scheduling.Event{},
 	}
-	f.islands = func(day scheduling.DayWindow, _ int) []scheduling.Island { return f.wholeDay(day) }
+	f.free = func(int) scheduling.Free { return f.allFree() }
 	return f
 }
 
-// wholeDay is every bay and technician free 07:00Z to 17:00Z on the day's UTC date(s).
-func (f *fixture) wholeDay(day scheduling.DayWindow) []scheduling.Island {
-	var is []scheduling.Island
-	for d := day.From.Truncate(24 * time.Hour); d.Before(day.To); d = d.Add(24 * time.Hour) {
-		open, closing := d.Add(7*time.Hour), d.Add(17*time.Hour)
-		if open.Before(day.From) || closing.After(day.To) {
-			continue
-		}
-		for _, b := range f.bays {
-			is = append(is, scheduling.Island{Kind: scheduling.ResourceBay, ResourceID: b.ID, From: open, To: closing})
-		}
-		for _, t := range f.techs {
-			is = append(is, scheduling.Island{Kind: scheduling.ResourceTechnician, ResourceID: t.ID, From: open, To: closing})
-		}
+// allFree is every bay and technician of the fixture.
+func (f *fixture) allFree() scheduling.Free {
+	free := scheduling.Free{}
+	for _, b := range f.bays {
+		free[b.ID] = true
 	}
-	return is
+	for _, t := range f.techs {
+		free[t.ID] = true
+	}
+	return free
 }
 
 // workingCells counts the grid cells in [from, to) that fall 07:00Z to 17:00Z, the fixture's
@@ -190,6 +184,11 @@ func workingCells(from, to time.Time) int {
 		}
 	}
 	return n
+}
+
+// inWorkingTime reports whether every cell of the run is a cell of the fixture's ledger.
+func inWorkingTime(run scheduling.CellRun) bool {
+	return workingCells(run.First, run.End()) == run.Cells
 }
 
 func notFound(what, id string) error {
@@ -250,25 +249,19 @@ func (f *fixture) service() Service {
 			return scheduling.Vehicle{}, notFound("vehicle", id)
 		})
 
-	f.store.EXPECT().DayLedger(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
-		func(_ context.Context, _ string, day scheduling.DayWindow, owner string) ([]scheduling.Island, error) {
-			f.ledgerCalls[day.LocalDate]++
-			f.ledgerOwners = append(f.ledgerOwners, owner)
-			return f.islands(day, f.ledgerCalls[day.LocalDate]), nil
-		})
 	f.store.EXPECT().RunAvailability(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
-		func(_ context.Context, _ string, day scheduling.DayWindow, bayRun, techRun scheduling.CellRun, owner string) (scheduling.Free, scheduling.Loads, error) {
-			f.ledgerCalls[day.LocalDate]++
+		func(_ context.Context, _ string, _ scheduling.DayWindow, bayRun, techRun scheduling.CellRun, owner string) (scheduling.Free, scheduling.Loads, error) {
 			f.ledgerOwners = append(f.ledgerOwners, owner)
-			// the resources whose island holds the whole run, as the ledger scan reports them
+			unbooked := f.free(len(f.ledgerOwners))
 			free := scheduling.Free{}
-			for _, i := range f.islands(day, f.ledgerCalls[day.LocalDate]) {
-				run := bayRun
-				if i.Kind == scheduling.ResourceTechnician {
-					run = techRun
+			for _, b := range f.bays {
+				if unbooked[b.ID] && inWorkingTime(bayRun) {
+					free[b.ID] = true
 				}
-				if run.Within(i) {
-					free[i.ResourceID] = true
+			}
+			for _, t := range f.techs {
+				if unbooked[t.ID] && inWorkingTime(techRun) {
+					free[t.ID] = true
 				}
 			}
 			return free, f.loads, nil

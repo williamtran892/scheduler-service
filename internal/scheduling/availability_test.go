@@ -6,13 +6,6 @@ import (
 	"time"
 )
 
-// The day used throughout: 2026-10-20 in Europe/London (BST), cells 07:00Z to 17:00Z.
-var testDay = DayWindow{
-	LocalDate: "2026-10-20",
-	From:      time.Date(2026, 10, 19, 23, 0, 0, 0, time.UTC),
-	To:        time.Date(2026, 10, 20, 23, 0, 0, 0, time.UTC),
-}
-
 var (
 	bay1  = ServiceBay{ID: "bay-1", Name: "Bay 1", Type: "GENERAL"}
 	bay2  = ServiceBay{ID: "bay-2", Name: "Bay 2", Type: "MOT"}
@@ -30,10 +23,6 @@ var (
 		RequiredSkills: []string{"EV_HV_L3", "GENERAL_SERVICE"}, AllowedBayTypes: []string{"GENERAL", "EV_HV"}, OnlineBookable: true, Active: true}
 )
 
-func island(t *testing.T, kind ResourceKind, id, from, to string) Island {
-	return Island{Kind: kind, ResourceID: id, From: z(t, from), To: z(t, to)}
-}
-
 // allFree is every bay and technician free for the whole run, as the ledger's scan reports them
 // on an empty day.
 func allFree(bays []ServiceBay, techs []Technician) Free {
@@ -45,41 +34,6 @@ func allFree(bays []ServiceBay, techs []Technician) Free {
 		free[tech.ID] = true
 	}
 	return free
-}
-
-// startsEvery lists grid starts from..to inclusive, as UTC times on the test day.
-func startsEvery(t *testing.T, from, to string) []time.Time {
-	var out []time.Time
-	for s := z(t, from); !s.After(z(t, to)); s = s.Add(15 * time.Minute) {
-		out = append(out, s)
-	}
-	return out
-}
-
-// The design's named case (design 5.1, notes 4.3): Bay 1 free until 09:15 and Bay 2 free from
-// 09:15 do not make a 30-minute slot at 09:00, because neither bay holds the whole run.
-func TestFeasibleStarts_RunSplitAcrossTwoBaysIsNotASlot(t *testing.T) {
-	general2 := ServiceBay{ID: "bay-2", Name: "Bay 2", Type: "GENERAL"}
-	req := ServiceRequirement{Duration: 30 * time.Minute, RequiredSkills: []string{"GENERAL_SERVICE"}, AllowedBayTypes: []string{"GENERAL"}}
-	islands := []Island{
-		island(t, ResourceBay, "bay-1", "08:00", "09:15"),
-		island(t, ResourceBay, "bay-1", "10:00", "17:00"),
-		island(t, ResourceBay, "bay-2", "09:15", "17:00"),
-		island(t, ResourceTechnician, "sam", "08:00", "17:00"),
-	}
-
-	got := FeasibleStarts(testDay, grid15, req, []ServiceBay{bay1, general2}, []Technician{sam}, islands)
-
-	want := append(startsEvery(t, "08:00", "08:45"), startsEvery(t, "09:15", "16:30")...)
-	if !slices.EqualFunc(got, want, time.Time.Equal) {
-		t.Errorf("FeasibleStarts = %v\nwant %v (everything but 09:00)", got, want)
-	}
-	// At 09:00 the ledger's scan finds neither bay free for the whole run, so only Sam is free:
-	// the run is free partly on Bay 1 and partly on Bay 2, which makes no candidate.
-	free := Free{"sam": true}
-	if pairs := CandidatePairs(req, []ServiceBay{bay1, general2}, []Technician{sam}, free, Loads{}, 1); len(pairs) != 0 {
-		t.Errorf("CandidatePairs at 09:00 = %v, want none", pairs)
-	}
 }
 
 func TestCandidatePairs_EachTechnicianMustHoldTheWholeRun(t *testing.T) {
@@ -173,24 +127,6 @@ func TestSeedFrom_IsStablePerID(t *testing.T) {
 	}
 	if SeedFrom(a) == SeedFrom(b) {
 		t.Error("SeedFrom gives two ids the same seed")
-	}
-}
-
-func TestNearestAlternatives(t *testing.T) {
-	starts := []time.Time{z(t, "06:45"), z(t, "07:00"), z(t, "07:15"), z(t, "08:00"), z(t, "08:45"),
-		z(t, "09:00"), z(t, "09:15"), z(t, "11:00")}
-	now := z(t, "06:50")
-
-	got := NearestAlternatives(starts, z(t, "08:00"), now, 5)
-
-	// 06:45 is past; 08:00 is the requested start; 07:15 and 08:45 tie at 45 minutes, earlier
-	// first; then 07:00 and 09:00 at 60; then 09:15 at 75; 11:00 falls beyond the five.
-	want := []time.Time{z(t, "07:15"), z(t, "08:45"), z(t, "07:00"), z(t, "09:00"), z(t, "09:15")}
-	if !slices.EqualFunc(got, want, time.Time.Equal) {
-		t.Errorf("NearestAlternatives = %v, want %v", got, want)
-	}
-	if got := NearestAlternatives(nil, z(t, "08:00"), now, 5); len(got) != 0 {
-		t.Errorf("no starts gave %v, want none", got)
 	}
 }
 

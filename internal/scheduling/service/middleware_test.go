@@ -35,7 +35,7 @@ func TestLoggingMiddleware_LogsMethodIdsDurationAndError(t *testing.T) {
 
 func TestInstrumentingMiddleware_CountsCallsByMethodAndCode(t *testing.T) {
 	next := NewMockService(gomock.NewController(t))
-	next.EXPECT().Book(gomock.Any(), gomock.Any()).Return(Record{}, &scheduling.SlotTakenError{Location: london})
+	next.EXPECT().Book(gomock.Any(), gomock.Any()).Return(Record{}, &scheduling.SlotTakenError{})
 	reader := sdkmetric.NewManualReader()
 	meter := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test")
 

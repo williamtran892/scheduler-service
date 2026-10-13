@@ -24,7 +24,7 @@ type Coded interface {
 }
 
 // Extended is implemented by domain errors that add members to the problem body
-// ("alternatives" on SLOT_TAKEN and AVAILABILITY_CHANGED, "existing" on DUPLICATE_BOOKING).
+// ("existing" on DUPLICATE_BOOKING).
 type Extended interface {
 	ProblemExtensions() map[string]any
 }
@@ -101,14 +101,13 @@ func StatusFor(code string) int {
 
 // Problem is an RFC 9457 problem-details body, as api/openapi.yaml defines it.
 type Problem struct {
-	Type         string         `json:"type"`
-	Title        string         `json:"title"`
-	Status       int            `json:"status"`
-	Code         string         `json:"code"`
-	Detail       string         `json:"detail,omitempty"`
-	Alternatives any            `json:"alternatives,omitempty"`
-	Existing     any            `json:"existing,omitempty"`
-	Errors       []FieldProblem `json:"errors,omitempty"`
+	Type     string         `json:"type"`
+	Title    string         `json:"title"`
+	Status   int            `json:"status"`
+	Code     string         `json:"code"`
+	Detail   string         `json:"detail,omitempty"`
+	Existing any            `json:"existing,omitempty"`
+	Errors   []FieldProblem `json:"errors,omitempty"`
 }
 
 // EncodeError writes err as application/problem+json. It is the only place in the
@@ -141,7 +140,6 @@ func problemFor(err error) Problem {
 	p := Problem{Type: ProblemTypeBase + code, Title: kind.title, Status: kind.status, Code: code, Detail: err.Error()}
 	var ext Extended
 	if errors.As(err, &ext) {
-		p.Alternatives = ext.ProblemExtensions()["alternatives"]
 		p.Existing = ext.ProblemExtensions()["existing"]
 	}
 	var field *FieldError

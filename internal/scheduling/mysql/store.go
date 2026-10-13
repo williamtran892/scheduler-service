@@ -12,11 +12,6 @@ import (
 type Store interface {
 	// InTx runs fn in one transaction: committed if fn returns nil, rolled back otherwise.
 	InTx(ctx context.Context, fn func(tx Tx) error) error
-	// DayLedger returns the islands of FREE cells per resource for one local day at a
-	// dealership: the whole day's free time, which the alternatives of SLOT_TAKEN need. Cells
-	// booked by owner count as free; owner is "" for a new booking and the appointment being
-	// moved for a reschedule.
-	DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, error)
 	// RunAvailability scans one local day at a dealership once and returns the ids of the bays
 	// whose every cell of bayRun is free and of the technicians whose every cell of techRun is
 	// free, with the BOOKED cell count per resource that day. A cell is free when its status is

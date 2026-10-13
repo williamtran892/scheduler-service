@@ -45,10 +45,6 @@ func registerRecordSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^the fetched record equals the booking response$`, w.fetchedEqualsBooked)
 	sc.Step(`^the audit trail has exactly one "([^"]*)" event through "([^"]*)"$`, w.auditTrailHasOne)
 
-	sc.Step(`^the response is (\d+) "([^"]*)" with between (\d+) and (\d+) alternatives$`, w.problemWithAlternatives)
-	sc.Step(`^the alternatives include `+timePattern+` and `+timePattern+` `+dayPattern+`$`, w.alternativesInclude)
-	sc.Step(`^no alternative starts at `+timePattern+` `+dayPattern+`$`, w.noAlternativeAt)
-	sc.Step(`^every alternative ends (\d+) minutes after it starts$`, w.everyAlternativeLasts)
 	sc.Step(`^the problem carries the first booking as the existing appointment with service type "([^"]*)"$`, w.problemCarriesFirstBooking)
 	sc.Step(`^the two appointments hold different bays and different technicians$`, w.lastTwoDisjoint)
 }
@@ -368,66 +364,7 @@ func (w *world) auditTrailHasOne(eventType, channel string) error {
 	return nil
 }
 
-// ---- alternatives and the existing appointment ---------------------------------------------
-
-func (w *world) problemWithAlternatives(status int, code string, lo, hi int) error {
-	if err := w.responseIsProblem(status, code); err != nil {
-		return err
-	}
-	alts, err := w.alternatives()
-	if err != nil {
-		return err
-	}
-	if len(alts) < lo || len(alts) > hi {
-		return fmt.Errorf("%d alternatives, want between %d and %d; body: %s", len(alts), lo, hi, w.body)
-	}
-	return nil
-}
-
-func (w *world) alternativesInclude(t1, t2, dayPhrase string) error {
-	alts, err := w.alternatives()
-	if err != nil {
-		return err
-	}
-	for _, hhmm := range []string{t1, t2} {
-		want, err := instant(dayPhrase, hhmm)
-		if err != nil {
-			return err
-		}
-		if !containsStart(alts, want) {
-			return fmt.Errorf("alternatives do not include %s %s; body: %s", dayPhrase, hhmm, w.body)
-		}
-	}
-	return nil
-}
-
-func (w *world) noAlternativeAt(hhmm, dayPhrase string) error {
-	alts, err := w.alternatives()
-	if err != nil {
-		return err
-	}
-	want, err := instant(dayPhrase, hhmm)
-	if err != nil {
-		return err
-	}
-	if containsStart(alts, want) {
-		return fmt.Errorf("an alternative starts at %s %s, the requested time; body: %s", dayPhrase, hhmm, w.body)
-	}
-	return nil
-}
-
-func (w *world) everyAlternativeLasts(minutes int) error {
-	alts, err := w.alternatives()
-	if err != nil {
-		return err
-	}
-	for _, s := range alts {
-		if got := s.end.Sub(s.start); got != time.Duration(minutes)*time.Minute {
-			return fmt.Errorf("alternative %s lasts %s, want %d minutes", s.start, got, minutes)
-		}
-	}
-	return nil
-}
+// ---- the existing appointment ---------------------------------------------------------------
 
 func (w *world) problemCarriesFirstBooking(serviceCode string) error {
 	first, err := w.firstBooking()
@@ -486,45 +423,6 @@ func (w *world) firstBooking() (map[string]any, error) {
 		return nil, fmt.Errorf("no appointment was confirmed in this scenario")
 	}
 	return w.appointments[0], nil
-}
-
-type slot struct{ start, end time.Time }
-
-func (w *world) alternatives() ([]slot, error) {
-	p, err := w.last().json()
-	if err != nil {
-		return nil, err
-	}
-	raw, ok := p["alternatives"].([]any)
-	if !ok {
-		return nil, fmt.Errorf("problem has no alternatives[]; body: %s", w.body)
-	}
-	slots := make([]slot, 0, len(raw))
-	for i, r := range raw {
-		m, ok := r.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("alternatives[%d] is not an object", i)
-		}
-		start, err := parseInstant(m["startAt"], fmt.Sprintf("alternatives[%d].startAt", i))
-		if err != nil {
-			return nil, err
-		}
-		end, err := parseInstant(m["endAt"], fmt.Sprintf("alternatives[%d].endAt", i))
-		if err != nil {
-			return nil, err
-		}
-		slots = append(slots, slot{start, end})
-	}
-	return slots, nil
-}
-
-func containsStart(slots []slot, t time.Time) bool {
-	for _, s := range slots {
-		if s.start.Equal(t) {
-			return true
-		}
-	}
-	return false
 }
 
 // field walks nested JSON objects; it returns nil when any step is missing.

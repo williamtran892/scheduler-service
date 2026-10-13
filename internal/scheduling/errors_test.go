@@ -40,11 +40,8 @@ func TestErrors_MissingCellsAreOneFamily(t *testing.T) {
 	}
 }
 
-func TestSlotTakenError_CarriesAlternativesInTheDealershipOffset(t *testing.T) {
-	err := error(&SlotTakenError{
-		Alternatives: []Slot{{StartAt: z(t, "08:15"), EndAt: z(t, "09:00")}},
-		Location:     london,
-	})
+func TestSlotTakenError_IsSlotTakenAndAddsNothingToTheBody(t *testing.T) {
+	err := error(&SlotTakenError{})
 	if !errors.Is(fmt.Errorf("book: %w", err), ErrSlotTaken) {
 		t.Error("SlotTakenError is not ErrSlotTaken")
 	}
@@ -52,32 +49,20 @@ func TestSlotTakenError_CarriesAlternativesInTheDealershipOffset(t *testing.T) {
 	if !errors.As(err, &coded) || coded.ProblemCode() != "SLOT_TAKEN" {
 		t.Errorf("ProblemCode = %v, want SLOT_TAKEN", coded)
 	}
-	var taken *SlotTakenError
-	if !errors.As(err, &taken) {
-		t.Fatalf("%T is not a *SlotTakenError", err)
-	}
-	got := extensionJSON(t, taken.ProblemExtensions(), "alternatives")
-	want := `[{"endAt":"2026-10-20T10:00:00+01:00","startAt":"2026-10-20T09:15:00+01:00"}]`
-	if got != want {
-		t.Errorf("alternatives = %s, want %s", got, want)
+	var extended interface{ ProblemExtensions() map[string]any }
+	if errors.As(err, &extended) {
+		t.Errorf("SlotTakenError has extensions %v, want none", extended.ProblemExtensions())
 	}
 }
 
-func TestSlotTakenError_EmptyAlternativesAreAnEmptyList(t *testing.T) {
-	got := extensionJSON(t, (&SlotTakenError{Location: london}).ProblemExtensions(), "alternatives")
-	if got != `[]` {
-		t.Errorf("alternatives = %s, want []", got)
-	}
-}
-
-func TestAvailabilityChangedError_CarriesAlternatives(t *testing.T) {
-	err := &AvailabilityChangedError{Alternatives: []Slot{{StartAt: z(t, "09:30"), EndAt: z(t, "10:15")}}, Location: london}
+func TestAvailabilityChangedError_IsAvailabilityChangedAndAddsNothingToTheBody(t *testing.T) {
+	err := &AvailabilityChangedError{}
 	if !errors.Is(err, ErrAvailabilityChanged) || err.ProblemCode() != "AVAILABILITY_CHANGED" {
 		t.Errorf("Is ErrAvailabilityChanged = %v, code %s", errors.Is(err, ErrAvailabilityChanged), err.ProblemCode())
 	}
-	want := `[{"endAt":"2026-10-20T11:15:00+01:00","startAt":"2026-10-20T10:30:00+01:00"}]`
-	if got := extensionJSON(t, err.ProblemExtensions(), "alternatives"); got != want {
-		t.Errorf("alternatives = %s, want %s", got, want)
+	var extended interface{ ProblemExtensions() map[string]any }
+	if errors.As(error(err), &extended) {
+		t.Errorf("AvailabilityChangedError has extensions %v, want none", extended.ProblemExtensions())
 	}
 }
 

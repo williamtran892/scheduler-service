@@ -63,13 +63,10 @@ Feature: Book an appointment
     And the appointment is on bay "Bay 1" with technician "Lee"
 
   @R2
-  Scenario: When every qualified pair is taken the caller gets alternatives
+  Scenario: When every qualified pair is taken the booking is refused
     Given "Alice" has booked "MOT" for "YK21 ABC" tomorrow at 15:00
     When "Bob" books "MOT" for "BD70 XYZ" tomorrow at 15:00
-    Then the response is 409 "SLOT_TAKEN" with between 1 and 5 alternatives
-    And the alternatives include 14:15 and 15:45 tomorrow
-    And no alternative starts at 15:00 tomorrow
-    And every alternative ends 45 minutes after it starts
+    Then the response is 409 "SLOT_TAKEN"
 
   Scenario: An unknown appointment is not found
     When appointment "00000000-0000-4000-8000-000000000000" is fetched

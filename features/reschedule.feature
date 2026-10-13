@@ -73,7 +73,7 @@ Feature: Reschedule and reassign an appointment
     Given "Bob" has booked "MOT" for "BD70 XYZ" in 11 days at 16:00
     And "Alice" has booked "MOT" for "YK21 ABC" in 11 days at 15:00
     When the appointment is rescheduled to 16:00 in 11 days
-    Then the response is 409 "SLOT_TAKEN" with between 1 and 5 alternatives
+    Then the response is 409 "SLOT_TAKEN"
     When the appointment is fetched through "ADVISOR_CONSOLE"
     Then the appointment status is "CONFIRMED" at version 1
     And the appointment runs from 15:00 to 15:45 in 11 days

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 )
 
@@ -65,9 +66,8 @@ func (e coded) Error() string                     { return "coded: " + e.code }
 func (e coded) ProblemCode() string               { return e.code }
 func (e coded) ProblemExtensions() map[string]any { return e.ext }
 
-func TestEncodeError_CodedErrorGetsItsStatusTypeAndExtensions(t *testing.T) {
-	alternatives := []any{map[string]any{"startAt": "2026-10-20T09:15:00+01:00", "endAt": "2026-10-20T10:00:00+01:00"}}
-	err := fmt.Errorf("book: %w", coded{code: "SLOT_TAKEN", ext: map[string]any{"alternatives": alternatives}})
+func TestEncodeError_CodedErrorGetsItsStatusAndType(t *testing.T) {
+	err := fmt.Errorf("book: %w", coded{code: "SLOT_TAKEN"})
 
 	rec, body := encode(t, err)
 
@@ -77,9 +77,10 @@ func TestEncodeError_CodedErrorGetsItsStatusTypeAndExtensions(t *testing.T) {
 	if body["code"] != "SLOT_TAKEN" || body["type"] != ProblemTypeBase+"SLOT_TAKEN" || body["title"] == "" {
 		t.Errorf("problem = %v", body)
 	}
-	got, _ := body["alternatives"].([]any)
-	if len(got) != 1 {
-		t.Errorf("alternatives = %v, want the one given", body["alternatives"])
+	for member := range body {
+		if !slices.Contains([]string{"type", "title", "status", "code", "detail"}, member) {
+			t.Errorf("problem has the member %q, want only type, title, status, code and detail", member)
+		}
 	}
 }
 

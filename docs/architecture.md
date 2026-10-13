@@ -44,7 +44,7 @@ implements Scheduling's reader interfaces. The design behind the split is in
 | `internal/platform` | Cross-cutting pieces: `Config`, `Clock` (`RealClock`, `FakeClock`), `IDs` (`UUIDs`), `OpenMySQL`, `EncodeError` and `Problem`, `Health`, `SetupOTel`. Imports no domain package |
 | `internal/setup/mysql` | Workshop Setup's `Repository`, which implements `scheduling.WorkshopReader` over `dealership`, `service_bay`, `technician`, `skill`, `technician_skill`, `service_type`, `service_type_bay_type`, `service_type_skill` and returns Scheduling's types. A service type and its skills and bay types are one query into a `ServiceRequirement`; only `ACTIVE` bays and technicians are listed, and a technician carries the skills valid on the date asked (`valid_from <= date`, `valid_to` null or `>= date`) |
 | `internal/customers/mysql` | Customer & Vehicle's `Repository`, which implements `scheduling.CustomerReader` over `customer` and `vehicle` and returns Scheduling's types |
-| `internal/scheduling` | Scheduling root, plain Go with no SQL or HTTP. `service.go` declares every shared struct and interface in one place, in sections: the appointment and ledger types (`Appointment`, `BookingKey`, `CustomerRequests`, `Event`, `CellRange`, `OwnedCells`, `ResourceRun`, `Keep`, `Island`, `Free`, `Loads`), the grid (`Grid`, `CellRun`, `Slot`), the requirement and resources (`ServiceRequirement`, `DealershipConfig`, `DayWindow`, `ServiceBay`, `Technician`, `Candidate`), the customers (`Customer`, `Vehicle`) and the readers (`WorkshopReader`, `CustomerReader`). The methods and functions stay with their algorithms: `grid.go` (`Align`, `Floor`, `Ceil`, `CellsFor`, and `CellRun`'s `Last`, `End` and `Within`), `availability.go` (`FeasibleStarts`, `CandidatePairs`, `NearestAlternatives`, `SeedFrom`), `requirement.go` (`ServiceRequirement.Runs`, `DealershipConfig.Day`, `Technician.HasAll`), `appointment.go` (`Appointment.Key`, `Keep.Keeps`), `enums.go` (the enumerations and the appointment status transition table, `CanTransitionTo`) and `errors.go` (the typed errors) |
+| `internal/scheduling` | Scheduling root, plain Go with no SQL or HTTP. `service.go` declares every shared struct and interface in one place, in sections: the appointment and ledger types (`Appointment`, `BookingKey`, `CustomerRequests`, `Event`, `CellRange`, `OwnedCells`, `ResourceRun`, `Keep`, `Free`, `Loads`), the grid (`Grid`, `CellRun`), the requirement and resources (`ServiceRequirement`, `DealershipConfig`, `DayWindow`, `ServiceBay`, `Technician`, `Candidate`), the customers (`Customer`, `Vehicle`) and the readers (`WorkshopReader`, `CustomerReader`). The methods and functions stay with their algorithms: `grid.go` (`Align`, `Floor`, `Ceil`, `CellsFor`, and `CellRun`'s `Last` and `End`), `availability.go` (`CandidatePairs`, `SeedFrom`), `requirement.go` (`ServiceRequirement.Runs`, `DealershipConfig.Day`, `Technician.HasAll`), `appointment.go` (`Appointment.Key`, `Keep.Keeps`), `enums.go` (the enumerations and the appointment status transition table, `CanTransitionTo`) and `errors.go` (the typed errors) |
 | `internal/scheduling/mysql` | Scheduling's own data access. `store.go` declares the interfaces `Store` and `Tx`; `db.go` has their implementation, the unexported types `store` and `tx` behind `New(db) Store`, over `appointment`, `time_slot`, `appointment_event` and `outbox`. It maps MySQL errors 1062 on `uq_appointment_booking` and 1213 to Scheduling's errors. `ClaimPair` and `ReleaseCells` in `ledger.go` are the only code that writes `time_slot` |
 | `internal/scheduling/service` | The go-kit service, with no HTTP routes or decoders: `Service` (`Book`, `Get`, `Reschedule`, `Cancel`, `CheckIn`, `Start`, `Complete`, `MarkNoShow`), its commands and `Record`, the business code, the appointment view per channel (`NewAppointmentView`, also the outbox snapshot), and the logging, instrumenting and tracing middleware |
 | `internal/scheduling/endpoint` | Scheduling's HTTP surface, in two files. `endpoint.go` has `EndpointSpec`, `Specs` (the route table: one slice literal with a row per operation), `Register`, and the go-kit endpoints (`Make<Operation>Endpoint`) with their request types. `facade.go` has the request decoders, the response encoders and the parsing they share |
@@ -64,9 +64,8 @@ Dependency rules, each pinned by a test or a convention the reviewer checks:
   directly and return Scheduling's types, so they import `scheduling`; `scheduling` never
   imports `setup` or `customers`.
 - A `mysql` package reads and writes its own domain's tables. One exception: `scheduling/mysql`
-  joins `dealership.slot_minutes` in `DayLedger` and `OwnedCells`, because a cell's length is
-  needed to tell consecutive cells from a gap and to end a cell range, and neither method's
-  signature carries the grid.
+  joins `dealership.slot_minutes` in `OwnedCells`, because a cell's length is needed to end a
+  cell range and the method's signature does not carry the grid.
 - `scheduling/endpoint` imports `scheduling/service`, `scheduling` and `platform`; `service` never
   imports `endpoint`. A domain's HTTP code lives only in its `endpoint` package, and routes are
   registered only by `endpoint.Register`, which `app.NewHandler` calls.
@@ -128,7 +127,7 @@ sweeper's is `no-show-sweeper`, with no channel.
 ### Times
 
 Requests carry `startAt` as an RFC 3339 date-time with an offset. Everything is stored in UTC.
-Responses render `startAt`, `endAt`, cell ranges and alternatives in the dealership's time zone,
+Responses render `startAt`, `endAt` and cell ranges in the dealership's time zone,
 and `createdAt`, `updatedAt` and event times in UTC. Cell ranges are half-open (`from` inclusive,
 `to` exclusive) with a cell count. `actualStartAt` and `actualEndAt` are `null` until a job starts
 and completes, then render in the dealership's time zone like `startAt`.
@@ -167,8 +166,7 @@ and completes, then render in the dealership's time zone like `startAt`.
     its own (a run split across two bays is not a candidate), least-loaded first, where load is
     the booked cells on the bay plus on the technician that day. Pairs of equal load are
     shuffled with a seed derived from the appointment id the request generated. With no
-    candidate, the booking key is looked up once more, then the answer is `409 SLOT_TAKEN` with
-    alternatives.
+    candidate, the booking key is looked up once more, then the answer is `409 SLOT_TAKEN`.
 
 ### The transaction and the claim
 
@@ -217,11 +215,10 @@ The service reacts to the outcome of an attempt:
 | cells missing | recompute the candidates once; if cells are missing again, re-check the booking key, then `409 AVAILABILITY_CHANGED` |
 | duplicate booking key (MySQL 1062) | the appointment that owns the key, as in check 3 |
 
-`SLOT_TAKEN` and `AVAILABILITY_CHANGED` carry up to five alternatives: the feasible starts for the
-same service type over the requested local date and the next one, later than now, never the
-requested start, nearest first and earlier first on a tie. They need the whole day's free time,
-so they read each day's islands of consecutive free cells (`DayLedger`), which nothing else on
-the booking path reads.
+A taken slot is answered with `409 SLOT_TAKEN` and nothing else: the problem has no member that
+offers another time. Finding another time is the availability endpoint's job, and that endpoint
+is not in this release, so nothing on the booking path computes feasible starts.
+`AVAILABILITY_CHANGED` is likewise only its code and detail.
 
 The record that the response and the outbox snapshot show is built before the transaction. A
 booking builds it in memory from what the request has already read, so no attempt reads anything
@@ -291,8 +288,8 @@ the dealer system sends, because the ledger must show what is free from now on.
 ### Reschedule and reassign
 
 A reschedule reuses booking's plan, checks, candidate search and claim loop, with the appointment
-as the owner: `RunAvailability` and `DayLedger` count the owner's cells as free, `RunAvailability`
-leaves them out of the loads, and a claim treats cells the appointment already owns as claimable,
+as the owner: `RunAvailability` counts the owner's cells as free and leaves them out of the
+loads, and a claim treats cells the appointment already owns as claimable,
 so a move that overlaps itself works. The new start is `startAt`, or the current start for a pure
 reassign, and follows booking's rules in booking's order (staff-only service through a customer
 channel, grid, after now, booking horizon, working time), so a reassign sent after the booked
@@ -304,9 +301,8 @@ named bay or technician put in its place, so a move keeps its bay and technician
 free; the others follow booking's order. Per pair, one transaction runs the update, the claim, the
 release of every owned cell outside the new runs and the event and outbox row. A taken pair moves
 to the next, a deadlock victim is retried once on the same pair, missing cells recompute the
-candidates once and then answer `409 AVAILABILITY_CHANGED`, and no pair left is `409 SLOT_TAKEN`;
-both carry up to five alternatives computed with the owner's cells free and the named resources
-respected. A new start that is the booking key of another appointment, in any status, is `409
+candidates once and then answer `409 AVAILABILITY_CHANGED`, and no pair left is `409 SLOT_TAKEN`.
+A new start that is the booking key of another appointment, in any status, is `409
 DUPLICATE_BOOKING` carrying it (MySQL 1062 on `uq_appointment_booking` from the update). In every
 refusal the appointment and its cells are unchanged. A reschedule can be the deadlock victim when
 a booking races it for the cells it frees (design 11.3).
@@ -320,8 +316,7 @@ others least-loaded first, and the transaction is the update (to `CHECKED_IN` wi
 and pair), then `ClaimPair`, then the event (with `lateArrival`, the previous and the new
 placement) and the outbox row. There is no release, since a no-show owns no cells. The booking
 horizon and "after now" do not apply. Every way of finding no pair, whether cells are taken or
-missing or nobody is qualified, is `409 SLOT_TAKEN` with alternatives from the current grid cell,
-and the appointment stays `NO_SHOW`.
+missing or nobody is qualified, is `409 SLOT_TAKEN`, and the appointment stays `NO_SHOW`.
 
 ### The no-show sweeper
 
@@ -347,7 +342,7 @@ Both are Go durations and must be greater than zero.
 
 Errors use RFC 9457 problem details (`application/problem+json`) with the fields `type`
 (`https://scheduler.example.com/problems/<CODE>`), `title`, `status`, `code` and `detail`, and
-where they apply `alternatives`, `existing` (the appointment that owns a booking key) and
+where they apply `existing` (the appointment that owns a booking key) and
 `errors[]` (`field` and `message`). `platform.EncodeError` is the only place that maps errors to
 status codes, from one table of the contract's problem codes:
 

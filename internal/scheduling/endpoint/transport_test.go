@@ -191,7 +191,6 @@ func namesField(body map[string]any, field string) bool {
 }
 
 func TestTransport_BookServiceErrorsBecomeProblems(t *testing.T) {
-	alternatives := []scheduling.Slot{{StartAt: on("08:15"), EndAt: on("09:00")}}
 	tests := []struct {
 		name   string
 		err    error
@@ -199,10 +198,8 @@ func TestTransport_BookServiceErrorsBecomeProblems(t *testing.T) {
 		code   string
 		check  func(body map[string]any) bool
 	}{
-		{"slot taken carries alternatives", &scheduling.SlotTakenError{Alternatives: alternatives, Location: london}, 409, "SLOT_TAKEN",
-			func(b map[string]any) bool { a, _ := b["alternatives"].([]any); return len(a) == 1 }},
-		{"availability changed carries alternatives", &scheduling.AvailabilityChangedError{Alternatives: alternatives, Location: london}, 409, "AVAILABILITY_CHANGED",
-			func(b map[string]any) bool { a, _ := b["alternatives"].([]any); return len(a) == 1 }},
+		{"slot taken", &scheduling.SlotTakenError{}, 409, "SLOT_TAKEN", nil},
+		{"availability changed", &scheduling.AvailabilityChangedError{}, 409, "AVAILABILITY_CHANGED", nil},
 		{"duplicate booking carries the existing appointment",
 			&scheduling.DuplicateBookingError{Existing: storedAppointment("interim", scheduling.StatusConfirmed), ServiceTypeCode: "INTERIM", Location: london},
 			409, "DUPLICATE_BOOKING", func(b map[string]any) bool { return get(b, "existing", "id") == "existing-1" }},
@@ -495,7 +492,7 @@ func TestTransport_LifecycleServiceErrorsBecomeProblems(t *testing.T) {
 		{"a staff action through a customer channel", scheduling.ErrForbidden, 403, "FORBIDDEN"},
 		{"a stale version", &scheduling.VersionConflictError{Current: 3, Sent: 2}, 409, "VERSION_CONFLICT"},
 		{"a transition the state machine refuses", scheduling.ErrInvalidTransition, 409, "INVALID_TRANSITION"},
-		{"a late arrival with nothing free", &scheduling.SlotTakenError{Location: london}, 409, "SLOT_TAKEN"},
+		{"a late arrival with nothing free", &scheduling.SlotTakenError{}, 409, "SLOT_TAKEN"},
 		{"an unknown appointment", scheduling.ErrNotFound, 404, "NOT_FOUND"},
 	}
 	for _, tt := range tests {

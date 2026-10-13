@@ -57,37 +57,25 @@ func (e *VersionConflictError) Error() string {
 func (e *VersionConflictError) Is(target error) bool { return target == ErrStaleVersion }
 func (e *VersionConflictError) ProblemCode() string  { return ErrStaleVersion.Code }
 
-// SlotTakenError is the final SLOT_TAKEN answer; it is ErrSlotTaken. Location renders the
-// alternatives in the dealership's offset.
-type SlotTakenError struct {
-	Alternatives []Slot
-	Location     *time.Location
-}
+// SlotTakenError is the final SLOT_TAKEN answer; it is ErrSlotTaken. It carries nothing but its
+// detail: finding another time is not part of a booking's answer.
+type SlotTakenError struct{}
 
 func (e *SlotTakenError) Error() string {
 	return "no compatible bay and qualified technician are both free at the requested start"
 }
 func (e *SlotTakenError) Is(target error) bool { return target == ErrSlotTaken }
 func (e *SlotTakenError) ProblemCode() string  { return ErrSlotTaken.Code }
-func (e *SlotTakenError) ProblemExtensions() map[string]any {
-	return map[string]any{"alternatives": slotsJSON(e.Alternatives, e.Location)}
-}
 
 // AvailabilityChangedError is the final AVAILABILITY_CHANGED answer; it is
 // ErrAvailabilityChanged.
-type AvailabilityChangedError struct {
-	Alternatives []Slot
-	Location     *time.Location
-}
+type AvailabilityChangedError struct{}
 
 func (e *AvailabilityChangedError) Error() string {
-	return "the capacity shown is no longer current; alternatives were recomputed"
+	return "the capacity shown is no longer current"
 }
 func (e *AvailabilityChangedError) Is(target error) bool { return target == ErrAvailabilityChanged }
 func (e *AvailabilityChangedError) ProblemCode() string  { return ErrAvailabilityChanged.Code }
-func (e *AvailabilityChangedError) ProblemExtensions() map[string]any {
-	return map[string]any{"alternatives": slotsJSON(e.Alternatives, e.Location)}
-}
 
 // DuplicateBookingError is DUPLICATE_BOOKING carrying the appointment that owns the key; it is
 // ErrDuplicateBooking.
@@ -110,15 +98,6 @@ func (e *DuplicateBookingError) ProblemExtensions() map[string]any {
 		"endAt":           formatIn(e.Existing.EndAt, e.Location),
 		"serviceTypeCode": e.ServiceTypeCode,
 	}}
-}
-
-// slotsJSON renders alternatives for the problem body; an empty list is [], not null.
-func slotsJSON(slots []Slot, loc *time.Location) []map[string]string {
-	out := make([]map[string]string, 0, len(slots))
-	for _, s := range slots {
-		out = append(out, map[string]string{"startAt": formatIn(s.StartAt, loc), "endAt": formatIn(s.EndAt, loc)})
-	}
-	return out
 }
 
 // formatIn renders t as RFC 3339 in loc, or in UTC when there is none.

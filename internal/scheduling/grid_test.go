@@ -56,7 +56,7 @@ func TestGrid_CellsForRoundsUp(t *testing.T) {
 	}
 }
 
-func TestCellRun_LastEndWithin(t *testing.T) {
+func TestCellRun_LastAndEnd(t *testing.T) {
 	r := run(z(t, "07:45"), 8) // a MAJOR at 08:00Z with 15/15 buffers
 
 	if got := r.Last(); !got.Equal(z(t, "09:30")) {
@@ -64,25 +64,6 @@ func TestCellRun_LastEndWithin(t *testing.T) {
 	}
 	if got := r.End(); !got.Equal(z(t, "09:45")) {
 		t.Errorf("End() = %s, want 09:45Z", got)
-	}
-
-	tests := []struct {
-		name     string
-		from, to string
-		want     bool
-	}{
-		{"whole day", "07:00", "17:00", true},
-		{"exact fit", "07:45", "09:45", true},
-		{"island starts one cell late", "08:00", "17:00", false},
-		{"island ends one cell early", "07:00", "09:30", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			i := Island{Kind: ResourceBay, ResourceID: "bay-1", From: z(t, tt.from), To: z(t, tt.to)}
-			if got := r.Within(i); got != tt.want {
-				t.Errorf("Within(%s-%s) = %v, want %v", tt.from, tt.to, got, tt.want)
-			}
-		})
 	}
 }
 

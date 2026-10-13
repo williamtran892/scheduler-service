@@ -36,7 +36,7 @@ Feature: No-shows and late arrivals
     And the appointment is on bay "Bay L1" with technician "Jo"
     And the appointment owns 3 bay cells and 3 technician cells
     When the appointment of "Bob" is checked in
-    Then the response is 409 "SLOT_TAKEN" with between 1 and 5 alternatives
+    Then the response is 409 "SLOT_TAKEN"
     When the appointment of "Bob" is fetched through "ADVISOR_CONSOLE"
     Then the appointment status is "NO_SHOW" at version 2
 

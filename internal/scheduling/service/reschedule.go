@@ -73,9 +73,9 @@ func (s *service) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record
 	})
 	switch {
 	case errors.Is(err, errNoPair):
-		return Record{}, s.slotTakenError(ctx, p)
+		return Record{}, &scheduling.SlotTakenError{}
 	case errors.Is(err, errCellsGone):
-		return Record{}, s.availabilityChangedError(ctx, p)
+		return Record{}, &scheduling.AvailabilityChangedError{}
 	case errors.Is(err, scheduling.ErrDuplicateBooking):
 		return Record{}, s.keyOwner(ctx, a, p.start)
 	}
@@ -86,8 +86,7 @@ func (s *service) Reschedule(ctx context.Context, cmd RescheduleCommand) (Record
 // new start is the grid cell that contains now, the runs follow from the service type as in
 // booking, and the previous pair is tried first, then the least-loaded. The booking horizon and
 // "after now" do not apply. Every way of finding no pair, whether the cells are taken or missing
-// or nobody is qualified, is SLOT_TAKEN with alternatives, and the appointment
-// stays NO_SHOW.
+// or nobody is qualified, is SLOT_TAKEN, and the appointment stays NO_SHOW.
 func (s *service) lateArrival(ctx context.Context, cmd TransitionCommand, a scheduling.Appointment, payload eventPayload) (Record, error) {
 	p, err := s.movePlan(ctx, a, cmd.Channel)
 	if err != nil {
@@ -98,7 +97,7 @@ func (s *service) lateArrival(ctx context.Context, cmd TransitionCommand, a sche
 
 	pairs, err := s.candidates(ctx, &p)
 	if errors.Is(err, scheduling.ErrNoQualifiedTechnician) {
-		return Record{}, s.slotTakenError(ctx, p)
+		return Record{}, &scheduling.SlotTakenError{}
 	}
 	if err != nil {
 		return Record{}, err
@@ -124,7 +123,7 @@ func (s *service) lateArrival(ctx context.Context, cmd TransitionCommand, a sche
 	})
 	switch {
 	case errors.Is(err, errNoPair), errors.Is(err, errCellsGone), errors.Is(err, scheduling.ErrNoQualifiedTechnician):
-		return Record{}, s.slotTakenError(ctx, p)
+		return Record{}, &scheduling.SlotTakenError{}
 	case errors.Is(err, scheduling.ErrDuplicateBooking):
 		return Record{}, s.keyOwner(ctx, a, p.start)
 	}

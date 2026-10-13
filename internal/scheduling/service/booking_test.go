@@ -78,7 +78,7 @@ func TestBook_ReplayOfTheSameRequestReturnsTheExistingAppointment(t *testing.T) 
 	}
 	f.owned["existing-1"] = owned
 	// The ledger is full: a replay must not depend on free capacity.
-	f.islands = func(scheduling.DayWindow, int) []scheduling.Island { return nil }
+	f.free = func(int) scheduling.Free { return nil }
 	cmd := booking()
 	cmd.CustomerRequests = scheduling.CustomerRequests{Notes: "Also check the wipers"}
 
@@ -253,26 +253,14 @@ func TestBook_NoQualifiedTechnician(t *testing.T) {
 	})
 }
 
-// Priya, the only MOT tester, is busy 08:00Z to 08:45Z on 2026-10-20.
-func priyaBusyAt8(f *fixture) func(scheduling.DayWindow, int) []scheduling.Island {
-	return func(day scheduling.DayWindow, _ int) []scheduling.Island {
-		var out []scheduling.Island
-		for _, i := range f.wholeDay(day) {
-			if i.ResourceID == "priya" && day.LocalDate == "2026-10-20" {
-				out = append(out,
-					scheduling.Island{Kind: i.Kind, ResourceID: "priya", From: on("07:00"), To: on("08:00")},
-					scheduling.Island{Kind: i.Kind, ResourceID: "priya", From: on("08:45"), To: on("17:00")})
-				continue
-			}
-			out = append(out, i)
-		}
-		return out
-	}
-}
-
-func TestBook_NoCandidatePairIsSlotTakenWithTheNearestAlternatives(t *testing.T) {
+func TestBook_NoCandidatePairIsSlotTaken(t *testing.T) {
 	f := newFixture(t)
-	f.islands = priyaBusyAt8(f)
+	// Priya, the only MOT tester, is busy 08:00Z to 08:45Z: the scan does not find her free.
+	f.free = func(int) scheduling.Free {
+		free := f.allFree()
+		delete(free, "priya")
+		return free
+	}
 	cmd := booking()
 	cmd.ServiceTypeID = "mot"
 
@@ -281,20 +269,6 @@ func TestBook_NoCandidatePairIsSlotTakenWithTheNearestAlternatives(t *testing.T)
 	var taken *scheduling.SlotTakenError
 	if !errors.As(err, &taken) {
 		t.Fatalf("error = %v, want SlotTakenError", err)
-	}
-	wantStarts := []time.Time{on("07:15"), on("08:45"), on("07:00"), on("09:00"), on("09:15")}
-	var gotStarts []time.Time
-	for _, s := range taken.Alternatives {
-		gotStarts = append(gotStarts, s.StartAt)
-		if !s.EndAt.Equal(s.StartAt.Add(45 * time.Minute)) {
-			t.Errorf("alternative %s ends %s, want start + 45 minutes", s.StartAt, s.EndAt)
-		}
-	}
-	if !slices.EqualFunc(gotStarts, wantStarts, time.Time.Equal) {
-		t.Errorf("alternatives = %v, want %v", gotStarts, wantStarts)
-	}
-	if taken.Location != london {
-		t.Errorf("alternatives location = %v, want Europe/London", taken.Location)
 	}
 	if f.lookups != 2 {
 		t.Errorf("booking key looked up %d times, want 2 (before capacity, then before answering SLOT_TAKEN)", f.lookups)
@@ -447,12 +421,12 @@ func TestBook_MissingCellsRecomputeCandidatesOnce(t *testing.T) {
 	f := newFixture(t)
 	f.loads = distinctLoads
 	// After the first claim fails, the recomputed ledger no longer has Sam that day.
-	f.islands = func(day scheduling.DayWindow, call int) []scheduling.Island {
-		is := f.wholeDay(day)
-		if call < 2 {
-			return is
+	f.free = func(call int) scheduling.Free {
+		free := f.allFree()
+		if call >= 2 {
+			delete(free, "sam")
 		}
-		return slices.DeleteFunc(is, func(i scheduling.Island) bool { return i.ResourceID == "sam" })
+		return free
 	}
 	f.expectTx(2)
 	run := cellRun(on("08:00"), 3)
@@ -483,9 +457,6 @@ func TestBook_MissingCellsTwiceIsAvailabilityChanged(t *testing.T) {
 	var changed *scheduling.AvailabilityChangedError
 	if !errors.As(err, &changed) {
 		t.Fatalf("error = %v, want AvailabilityChangedError", err)
-	}
-	if n := len(changed.Alternatives); n < 1 || n > 5 {
-		t.Errorf("%d alternatives, want 1 to 5", n)
 	}
 	if f.lookups != 2 {
 		t.Errorf("booking key looked up %d times, want 2 (before capacity, then before answering)", f.lookups)
@@ -552,14 +523,6 @@ func TestBook_ExhaustedPairsIsSlotTaken(t *testing.T) {
 	var taken *scheduling.SlotTakenError
 	if !errors.As(err, &taken) {
 		t.Fatalf("error = %v, want SlotTakenError", err)
-	}
-	for _, s := range taken.Alternatives {
-		if s.StartAt.Equal(on("08:00")) {
-			t.Errorf("alternatives include the requested start: %v", taken.Alternatives)
-		}
-	}
-	if n := len(taken.Alternatives); n < 1 || n > 5 {
-		t.Errorf("%d alternatives, want 1 to 5", n)
 	}
 }
 

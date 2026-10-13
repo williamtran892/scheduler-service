@@ -237,30 +237,16 @@ func TestReschedule_MissingCellsTwiceIsAvailabilityChanged(t *testing.T) {
 	}
 }
 
-func TestReschedule_NoFreePairIsSlotTakenWithAlternativesAndChangesNothing(t *testing.T) {
+func TestReschedule_NoFreePairIsSlotTakenAndChangesNothing(t *testing.T) {
 	f := newFixture(t)
 	f.storedAt(scheduling.StatusConfirmed, 1)
-	f.islands = func(day scheduling.DayWindow, _ int) []scheduling.Island {
-		var free []scheduling.Island
-		for _, i := range f.wholeDay(day) {
-			if i.From.Day() == 20 { // the requested day is full from 08:30Z to 10:30Z on every resource
-				free = append(free, scheduling.Island{Kind: i.Kind, ResourceID: i.ResourceID, From: i.From, To: on("08:30")},
-					scheduling.Island{Kind: i.Kind, ResourceID: i.ResourceID, From: on("10:30"), To: i.To})
-				continue
-			}
-			free = append(free, i)
-		}
-		return free
-	}
+	f.free = func(int) scheduling.Free { return nil } // every resource is booked for 09:00Z to 09:45Z
 
 	_, err := f.service().Reschedule(ctx, moveTo("09:00"))
 
 	var taken *scheduling.SlotTakenError
 	if !errors.As(err, &taken) {
 		t.Fatalf("error = %v, want SlotTakenError", err)
-	}
-	if n := len(taken.Alternatives); n < 1 || n > 5 {
-		t.Errorf("%d alternatives, want 1 to 5", n)
 	}
 	if a := f.stored[lifeID]; a.Version != 1 || !a.StartAt.Equal(on("08:00")) {
 		t.Errorf("appointment v%d at %s, want it unchanged", a.Version, a.StartAt)

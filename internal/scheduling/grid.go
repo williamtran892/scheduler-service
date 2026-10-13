@@ -41,6 +41,3 @@ func (r CellRun) Last() time.Time { return r.First.Add(time.Duration(r.Cells-1) 
 
 // End is the end of the run's last cell (exclusive).
 func (r CellRun) End() time.Time { return r.First.Add(time.Duration(r.Cells) * r.Slot) }
-
-// Within reports whether the whole run lies inside the island [From, To).
-func (r CellRun) Within(i Island) bool { return !r.First.Before(i.From) && !r.End().After(i.To) }

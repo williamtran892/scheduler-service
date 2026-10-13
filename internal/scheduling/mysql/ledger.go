@@ -186,54 +186,6 @@ func scanCells(rows *sql.Rows) ([]cell, error) {
 	return cells, rows.Err()
 }
 
-// DayLedger returns, for one local day at a dealership, the islands of consecutive FREE cells per
-// resource (design 11.4, "free runs per resource"): the whole day's free time, which the
-// alternatives of SLOT_TAKEN and AVAILABILITY_CHANGED are computed from.
-//
-// The island query needs the length of a cell to tell consecutive cells from a gap. The
-// signature carries no grid, so it joins dealership.slot_minutes: the one column this package
-// reads from another domain's table, through time_slot's own foreign key.
-//
-// The cells booked by owner count as free: they join the islands, so a reschedule sees the
-// appointment's own time as available (design 5.4). owner is "" for a new booking, which no
-// appointment id equals.
-func (s *store) DayLedger(ctx context.Context, dealershipID string, day scheduling.DayWindow, owner string) ([]scheduling.Island, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		WITH free AS (
-		  SELECT ts.resource_kind, ts.resource_id, ts.slot_start, d.slot_minutes,
-		         -- Subtracting the row number times the slot length from a cell's start gives
-		         -- adjacent cells the same run_key: each next cell starts one slot later and has a
-		         -- row number one higher. A gap shifts the key, so grouping by it yields the islands.
-		         ts.slot_start - INTERVAL d.slot_minutes * ROW_NUMBER() OVER (
-		             PARTITION BY ts.resource_kind, ts.resource_id ORDER BY ts.slot_start) MINUTE AS run_key
-		    FROM time_slot ts
-		    JOIN dealership d ON d.id = ts.dealership_id
-		   WHERE ts.dealership_id = ? AND (ts.status = ? OR ts.appointment_id = ?)
-		     AND ts.slot_start >= ? AND ts.slot_start < ?)
-		SELECT resource_kind, resource_id, MIN(slot_start), MAX(slot_start) + INTERVAL slot_minutes MINUTE
-		  FROM free
-		 GROUP BY resource_kind, resource_id, slot_minutes, run_key
-		 ORDER BY resource_kind, resource_id, MIN(slot_start)`,
-		dealershipID, scheduling.CellFree, owner, day.From, day.To)
-	if err != nil {
-		return nil, fmt.Errorf("free runs of dealership %s on %s: %w", dealershipID, day.LocalDate, err)
-	}
-	defer rows.Close()
-
-	var islands []scheduling.Island
-	for rows.Next() {
-		var i scheduling.Island
-		if err := rows.Scan(&i.Kind, &i.ResourceID, &i.From, &i.To); err != nil {
-			return nil, fmt.Errorf("free runs of dealership %s on %s: %w", dealershipID, day.LocalDate, err)
-		}
-		islands = append(islands, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("free runs of dealership %s on %s: %w", dealershipID, day.LocalDate, err)
-	}
-	return islands, nil
-}
-
 // RunAvailability scans the day's cells of the dealership once, grouped by resource, and returns
 // the ids of the bays whose every cell of bayRun is free and of the technicians whose every cell
 // of techRun is free, with the BOOKED cell count per resource. A resource that has no cell on
@@ -248,7 +200,7 @@ func (s *store) DayLedger(ctx context.Context, dealershipID string, day scheduli
 //
 // A run is held when the count of its free cells equals its cell count: the primary key makes
 // the cells of a resource unique, so no cell is counted twice, and a cell outside the day's
-// range or missing from the ledger leaves the count short, as a gap between islands did.
+// range or missing from the ledger leaves the count short.
 func (s *store) RunAvailability(ctx context.Context, dealershipID string, day scheduling.DayWindow,
 	bayRun, techRun scheduling.CellRun, owner string) (scheduling.Free, scheduling.Loads, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -316,7 +268,8 @@ func (s *store) WorkingCellCounts(ctx context.Context, dealershipID string, bayR
 
 // OwnedCells returns the cell ranges an appointment owns on its bay and on its technician, as
 // half-open intervals (contract CellRange). The end of a range is its last cell plus one cell,
-// so this query too joins dealership.slot_minutes (see DayLedger).
+// so this query joins dealership.slot_minutes: the one column this package reads from another
+// domain's table, through time_slot's own foreign key.
 func (s *store) OwnedCells(ctx context.Context, appointmentID string) (scheduling.OwnedCells, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ts.resource_kind, MIN(ts.slot_start), MAX(ts.slot_start) + INTERVAL d.slot_minutes MINUTE, COUNT(*)
