@@ -179,13 +179,34 @@ it is committed; every other outcome leaves none of it behind.
 
 `Tx.ClaimPair` and `Tx.ReleaseCells` in `internal/scheduling/mysql/ledger.go` are the only code
 that writes `time_slot`. For the bay run and then the technician run, always in that order,
-`ClaimPair` locks the run's cells with `SELECT ... FOR UPDATE` ordered by `slot_start`, checks in
-Go that every cell exists and is `FREE` or already booked by the appointment it claims for, then
-updates them to `BOOKED` with the appointment id and `version = version + 1`. A locking read is a
-current read, so two claimers of overlapping cells serialise on the first shared row and the
-loser sees `BOOKED` before it writes, at MySQL's default isolation level. A test fails if any
-other production file writes `time_slot`; the acceptance suite's `@clock` step is test code and is
-exempt (see [Development Standards](./development.md)).
+`ClaimPair` claims the run with one conditional `UPDATE`: it sets the cells in the run's range to
+`BOOKED` with the appointment id and `version = version + 1`, where the cell is `FREE` or already
+booked by the appointment it claims for. The run is claimed when the statement affects exactly
+as many rows as the run has cells. The argument that this double books nothing:
+
+- An `UPDATE` is a locking current read. It takes the lock on each row of the range, in
+  `slot_start` order, and tests its condition on the latest committed row once it holds the lock,
+  not on a snapshot, at MySQL's default isolation level. Two claimers of overlapping cells
+  therefore serialise on the first shared row, and the loser, after the winner commits, finds the
+  cells `BOOKED` by another appointment: its `UPDATE` matches fewer rows than the run has cells
+  and the claim is refused.
+- The order of the locks is the same as before, bay run, then technician run, ascending
+  `slot_start` within a run, so plain claims cannot deadlock each other. A reschedule can still
+  be the victim when a booking races it for the cells it frees (see Reschedule and reassign).
+- `version = version + 1` always changes a matched row, so the affected-row count includes every
+  matched cell, even one whose status and owner are already the claimant's. This relies on the
+  driver reporting changed rows: the DSN must not set `clientFoundRows`, which would count matched
+  rows instead.
+
+Fewer affected rows than cells means the claim is refused, and only then does `ClaimPair` read:
+it locks the run's cells with `SELECT ... FOR UPDATE` to tell cells missing (fewer rows exist
+than the run needs: `ErrBayNotOpen` or `ErrTechnicianNotWorking`) from a cell booked by another
+appointment (`ErrSlotTaken`). The refused `UPDATE` may have changed the cells it matched, so the
+error is returned and the transaction rolls back, which leaves the ledger as it was. A booking
+therefore runs five statements in its transaction: the insert, the bay `UPDATE`, the technician
+`UPDATE`, the event and the outbox row. A test fails if any other production file writes
+`time_slot` or if `ledger.go` no longer holds the conditional claim; the acceptance suite's
+`@clock` step is test code and is exempt (see [Development Standards](./development.md)).
 
 The service reacts to the outcome of an attempt:
 

@@ -80,20 +80,69 @@ func (tx *tx) ReleaseCells(appointmentID string, keep scheduling.Keep) (int, err
 	return freed, nil
 }
 
-// cell is one time_slot row as the claim reads it.
+// cell is one time_slot row as the failed claim reads it back.
 type cell struct {
 	start         time.Time
 	status        scheduling.CellStatus
 	appointmentID sql.NullString
 }
 
-// claimRun locks the cells of one run, checks in Go that every one exists and is FREE, then marks
-// them BOOKED. A cell the appointment already owns counts as free, so a reschedule can claim runs
-// that overlap its own cells. The locking read is a current read: two claimers of overlapping
-// cells serialise on the first shared row, and the loser sees BOOKED and stops before writing.
-// Without FOR UPDATE a read at REPEATABLE READ would see a snapshot and double book.
+// claimRun marks the cells of one run BOOKED with one conditional UPDATE:
+//
+//	UPDATE time_slot SET status = BOOKED, appointment_id = ?, version = version + 1
+//	 WHERE <the run's resource and range> AND (status = FREE OR appointment_id = ?)
+//
+// A cell the appointment already owns counts as claimable, so a reschedule can claim runs that
+// overlap its own cells. The run is claimed when the UPDATE affects exactly run.Cells rows.
+//
+// Why that is safe without a read before it:
+//   - An UPDATE is a locking current read. It waits for the lock on each row of the range, in
+//     slot_start order along the primary key, and tests its WHERE clause on the latest committed
+//     row once it holds the lock, never on a snapshot. Two claimers of overlapping cells therefore
+//     serialise on the first shared row, and the loser, once the winner has committed, finds those
+//     cells BOOKED by somebody else: its UPDATE matches fewer rows than the run has cells, and
+//     the claim is refused. At REPEATABLE READ the UPDATE keeps the locks of every row it
+//     scanned, matched or not, until the transaction ends.
+//   - The order of the locks is unchanged: the bay run, then the technician run (ClaimPair), and
+//     ascending slot_start within a run, so the argument that plain claims cannot deadlock each
+//     other holds as before.
+//   - version = version + 1 always changes a matched row, so RowsAffected counts every matched
+//     cell, even one whose status and appointment_id are already the claimant's. MySQL counts
+//     changed rows unless the connection sets clientFoundRows, which the DSN must not do: it would
+//     count matched rows, and the check below would mean nothing.
+//
+// A claim that affects fewer rows than the run needs may already have changed the rows it did
+// match, so the transaction must be rolled back; every caller returns the error and InTx rolls
+// back. Only on that failure path does claimRun read, to name the failure (see refusal).
 func (tx *tx) claimRun(dealershipID string, kind scheduling.ResourceKind, id string, run scheduling.CellRun,
 	appointmentID string, missing error) error {
+	res, err := tx.tx.ExecContext(tx.ctx, `
+		UPDATE time_slot SET status = ?, appointment_id = ?, version = version + 1
+		 WHERE resource_kind = ? AND resource_id = ? AND dealership_id = ? AND slot_start BETWEEN ? AND ?
+		   AND (status = ? OR appointment_id = ?)`,
+		scheduling.CellBooked, appointmentID, kind, id, dealershipID, run.First, run.Last(),
+		scheduling.CellFree, appointmentID)
+	if err != nil {
+		return fmt.Errorf("book %s %s cells: %w", kind, id, mapError(err))
+	}
+	claimed, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("book %s %s cells: %w", kind, id, err)
+	}
+	if claimed == int64(run.Cells) {
+		return nil
+	}
+	return tx.refusal(dealershipID, kind, id, run, appointmentID, missing, claimed)
+}
+
+// refusal says why a claim of run affected claimed rows instead of run.Cells. It runs only on that
+// failure path, inside the claim's transaction, which still holds the locks of the range: it
+// reads the range with FOR UPDATE, so nothing changes under it, and that read also sees the rows
+// the failed UPDATE changed, now owned by the claimant, which it ignores like any owned cell.
+// Fewer rows than the run needs is the missing error, with the counts; a row BOOKED by another
+// appointment is scheduling.ErrSlotTaken, naming the cell and the appointment.
+func (tx *tx) refusal(dealershipID string, kind scheduling.ResourceKind, id string, run scheduling.CellRun,
+	appointmentID string, missing error, claimed int64) error {
 	rows, err := tx.tx.QueryContext(tx.ctx, `
 		SELECT slot_start, status, appointment_id
 		  FROM time_slot
@@ -104,7 +153,7 @@ func (tx *tx) claimRun(dealershipID string, kind scheduling.ResourceKind, id str
 		return fmt.Errorf("lock %s %s cells: %w", kind, id, mapError(err))
 	}
 	defer rows.Close()
-	cells, err := scanCells(rows) // reads every row, so the connection is free for the UPDATE
+	cells, err := scanCells(rows) // reads every row, so the connection is free again
 	if err != nil {
 		return fmt.Errorf("lock %s %s cells: %w", kind, id, mapError(err))
 	}
@@ -119,15 +168,10 @@ func (tx *tx) claimRun(dealershipID string, kind scheduling.ResourceKind, id str
 				kind, id, c.start.UTC().Format(time.RFC3339), c.appointmentID.String, scheduling.ErrSlotTaken)
 		}
 	}
-
-	_, err = tx.tx.ExecContext(tx.ctx, `
-		UPDATE time_slot SET status = ?, appointment_id = ?, version = version + 1
-		 WHERE resource_kind = ? AND resource_id = ? AND dealership_id = ? AND slot_start BETWEEN ? AND ?`,
-		scheduling.CellBooked, appointmentID, kind, id, dealershipID, run.First, run.Last())
-	if err != nil {
-		return fmt.Errorf("book %s %s cells: %w", kind, id, mapError(err))
-	}
-	return nil
+	// Every cell exists and is claimable, yet the UPDATE did not match exactly run.Cells of them:
+	// cells off the run's grid inside its range. Never answer success for it.
+	return fmt.Errorf("book %s %s cells: claimed %d rows for a run of %d cells and found no missing or taken cell",
+		kind, id, claimed, run.Cells)
 }
 
 func scanCells(rows *sql.Rows) ([]cell, error) {

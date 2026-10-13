@@ -46,9 +46,10 @@ type Tx interface {
 	// InsertAppointment is the first statement of a booking attempt; a duplicate booking key
 	// is scheduling.ErrDuplicateBooking.
 	InsertAppointment(a scheduling.Appointment) error
-	// ClaimPair locks, checks and books the bay run, then the technician run. A taken cell is
-	// scheduling.ErrSlotTaken; a missing cell is scheduling.ErrBayNotOpen or
-	// scheduling.ErrTechnicianNotWorking; a deadlock is scheduling.ErrDeadlockVictim.
+	// ClaimPair books the bay run, then the technician run, each with one conditional UPDATE. A
+	// taken cell is scheduling.ErrSlotTaken; a missing cell is scheduling.ErrBayNotOpen or
+	// scheduling.ErrTechnicianNotWorking; a deadlock is scheduling.ErrDeadlockVictim. After any
+	// error the transaction must be rolled back: the rows a refused claim matched were changed.
 	ClaimPair(dealershipID, bayID string, bayRun scheduling.CellRun, techID string, techRun scheduling.CellRun, appointmentID string) error
 	// UpdateAppointment writes a's new state if the stored version is expectedVersion, setting
 	// version = expectedVersion + 1. Zero rows matched is scheduling.ErrStaleVersion; a new
